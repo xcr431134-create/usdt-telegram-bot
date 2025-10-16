@@ -1,6 +1,8 @@
 import os
+import json
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from datetime import datetime
 
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 if not BOT_TOKEN:
@@ -8,10 +10,11 @@ if not BOT_TOKEN:
     exit(1)
 
 print(f"✅ Token loaded: {BOT_TOKEN[:10]}...")
+print("🔄 Starting bot...")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# قاعدة بيانات بسيطة
+# قاعدة بيانات في الذاكرة
 users_db = {}
 ADMIN_IDS = [8400225549]
 
@@ -28,16 +31,18 @@ def get_user(user_id):
             'total_earned': 0.0,
             'total_deposits': 0.0,
             'vip_level': 0,
-            'registration_date': "2024-01-01"
+            'registration_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'last_activity': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
     return users_db[user_id]
 
-# 🔰 الأوامر للجميع
+# 🎯 الأوامر للجميع
 @bot.message_handler(commands=['start'])
 def start_command(message):
     user = get_user(message.from_user.id)
     user['first_name'] = message.from_user.first_name or ""
     user['username'] = message.from_user.username or ""
+    user['last_activity'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton("🎯 رابط الاحالات", callback_data="referral"))
@@ -51,10 +56,15 @@ def start_command(message):
 
 @bot.message_handler(commands=['myid'])
 def myid(message):
+    user = get_user(message.from_user.id)
+    user['last_activity'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     bot.reply_to(message, f"🆔 معرفك: `{message.from_user.id}`", parse_mode='Markdown')
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_buttons(call):
+    user = get_user(call.from_user.id)
+    user['last_activity'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
     if call.data == "referral":
         referral_link = f"https://t.me/{bot.get_me().username}?start=ref{call.from_user.id}"
         bot.edit_message_text(
@@ -69,6 +79,9 @@ def quick_add(message):
     if message.from_user.id not in ADMIN_IDS:
         bot.reply_to(message, "❌ ليس لديك صلاحية!")
         return
+    
+    user = get_user(message.from_user.id)
+    user['last_activity'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
     try:
         parts = message.text.split()
@@ -93,6 +106,9 @@ def set_balance(message):
     if message.from_user.id not in ADMIN_IDS:
         bot.reply_to(message, "❌ ليس لديك صلاحية!")
         return
+    
+    user = get_user(message.from_user.id)
+    user['last_activity'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
     try:
         parts = message.text.split()
@@ -119,6 +135,9 @@ def set_referrals(message):
         bot.reply_to(message, "❌ ليس لديك صلاحية!")
         return
     
+    user = get_user(message.from_user.id)
+    user['last_activity'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
     try:
         parts = message.text.split()
         if len(parts) != 3:
@@ -137,34 +156,15 @@ def set_referrals(message):
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ: {e}")
 
-@bot.message_handler(commands=['addreferral'])
-def add_referral(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "❌ ليس لديك صلاحية!")
-        return
-    
-    try:
-        parts = message.text.split()
-        if len(parts) != 2:
-            bot.reply_to(message, "❌ استخدم: /addreferral [user_id]")
-            return
-        
-        user_id = int(parts[1])
-        
-        user = get_user(user_id)
-        user['referrals_count'] += 1
-        
-        bot.reply_to(message, f"✅ تم إضافة إحالة للمستخدم {user_id}\n👥 الإحالات الجديدة: {user['referrals_count']}")
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ: {e}")
-
 # 🎯 إدارة المحاولات
 @bot.message_handler(commands=['setattempts'])
 def set_attempts(message):
     if message.from_user.id not in ADMIN_IDS:
         bot.reply_to(message, "❌ ليس لديك صلاحية!")
         return
+    
+    user = get_user(message.from_user.id)
+    user['last_activity'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
     try:
         parts = message.text.split()
@@ -190,6 +190,9 @@ def reset_attempts(message):
         bot.reply_to(message, "❌ ليس لديك صلاحية!")
         return
     
+    user = get_user(message.from_user.id)
+    user['last_activity'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
     try:
         parts = message.text.split()
         if len(parts) != 2:
@@ -206,83 +209,15 @@ def reset_attempts(message):
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ: {e}")
 
-@bot.message_handler(commands=['addattempts'])
-def add_attempts(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "❌ ليس لديك صلاحية!")
-        return
-    
-    try:
-        parts = message.text.split()
-        if len(parts) != 3:
-            bot.reply_to(message, "❌ استخدم: /addattempts [user_id] [count]")
-            return
-        
-        user_id = int(parts[1])
-        count = int(parts[2])
-        
-        user = get_user(user_id)
-        user['games_played_today'] = max(0, user['games_played_today'] - count)
-        
-        bot.reply_to(message, f"✅ تم إضافة {count} محاولة للمستخدم {user_id}\n🎯 المحاولات المتبقية: {3 - user['games_played_today']}/3")
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ: {e}")
-
-# 💳 إدارة الإيداعات
-@bot.message_handler(commands=['setdeposits'])
-def set_deposits(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "❌ ليس لديك صلاحية!")
-        return
-    
-    try:
-        parts = message.text.split()
-        if len(parts) != 3:
-            bot.reply_to(message, "❌ استخدم: /setdeposits [user_id] [amount]")
-            return
-        
-        user_id = int(parts[1])
-        amount = float(parts[2])
-        
-        user = get_user(user_id)
-        old_deposits = user['total_deposits']
-        user['total_deposits'] = amount
-        
-        bot.reply_to(message, f"✅ تم تعيين إيداعات المستخدم {user_id}\n💳 السابق: {old_deposits:.1f}\n💳 الجديد: {user['total_deposits']:.1f} USDT")
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ: {e}")
-
-@bot.message_handler(commands=['adddeposit'])
-def add_deposit(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "❌ ليس لديك صلاحية!")
-        return
-    
-    try:
-        parts = message.text.split()
-        if len(parts) != 3:
-            bot.reply_to(message, "❌ استخدم: /adddeposit [user_id] [amount]")
-            return
-        
-        user_id = int(parts[1])
-        amount = float(parts[2])
-        
-        user = get_user(user_id)
-        user['total_deposits'] += amount
-        
-        bot.reply_to(message, f"✅ تم إضافة إيداع للمستخدم {user_id}\n💳 الإيداعات الجديدة: {user['total_deposits']:.1f} USDT")
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ: {e}")
-
 # 📊 عرض البيانات
 @bot.message_handler(commands=['userinfo'])
 def user_info(message):
     if message.from_user.id not in ADMIN_IDS:
         bot.reply_to(message, "❌ ليس لديك صلاحية!")
         return
+    
+    user = get_user(message.from_user.id)
+    user['last_activity'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
     try:
         parts = message.text.split()
@@ -294,6 +229,7 @@ def user_info(message):
         user = get_user(user_id)
         
         remaining_attempts = 3 - user['games_played_today']
+        last_active = user.get('last_activity', 'غير معروف')
         
         info_text = f"""
 📊 معلومات المستخدم:
@@ -306,7 +242,9 @@ def user_info(message):
 💎 VIP: {user['vip_level']}
 🎮 الألعاب: {user['total_games_played']}
 💳 الإيداعات: {user['total_deposits']:.1f} USDT
-🏆 الأرباح: {user['total_earned']:.1f} USDT"""
+🏆 الأرباح: {user['total_earned']:.1f} USDT
+📅 مسجل منذ: {user['registration_date']}
+🕒 آخر نشاط: {last_active}"""
         
         bot.reply_to(message, info_text)
         
@@ -318,6 +256,9 @@ def list_users(message):
     if message.from_user.id not in ADMIN_IDS:
         bot.reply_to(message, "❌ ليس لديك صلاحية!")
         return
+    
+    user = get_user(message.from_user.id)
+    user['last_activity'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
     try:
         if len(users_db) == 0:
@@ -342,6 +283,9 @@ def stats(message):
         bot.reply_to(message, "❌ ليس لديك صلاحية!")
         return
     
+    user = get_user(message.from_user.id)
+    user['last_activity'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
     try:
         total_balance = sum(user['balance'] for user in users_db.values())
         total_referrals = sum(user['referrals_count'] for user in users_db.values())
@@ -363,36 +307,14 @@ def stats(message):
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ: {e}")
 
-# 💎 إدارة VIP
-@bot.message_handler(commands=['setvip'])
-def set_vip(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "❌ ليس لديك صلاحية!")
-        return
-    
-    try:
-        parts = message.text.split()
-        if len(parts) != 3:
-            bot.reply_to(message, "❌ استخدم: /setvip [user_id] [level]")
-            return
-        
-        user_id = int(parts[1])
-        level = int(parts[2])
-        
-        user = get_user(user_id)
-        old_level = user['vip_level']
-        user['vip_level'] = level
-        
-        bot.reply_to(message, f"✅ تم تعيين مستوى VIP للمستخدم {user_id}\n💎 السابق: {old_level}\n💎 الجديد: {user['vip_level']}")
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ: {e}")
-
 @bot.message_handler(commands=['adminhelp'])
 def admin_help(message):
     if message.from_user.id not in ADMIN_IDS:
         bot.reply_to(message, "❌ ليس لديك صلاحية!")
         return
+    
+    user = get_user(message.from_user.id)
+    user['last_activity'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
     help_text = """
 🛠️ الأوامر الإدارية:
@@ -403,24 +325,15 @@ def admin_help(message):
 
 👥 إدارة الإحالات:
 /setreferrals [user_id] [count] - تعيين عدد الإحالات
-/addreferral [user_id] - إضافة إحالة واحدة
 
 🎯 إدارة المحاولات:
 /setattempts [user_id] [attempts] - تعيين محاولات الألعاب
 /resetattempts [user_id] - إعادة تعيين المحاولات
-/addattempts [user_id] [count] - إضافة محاولات
-
-💳 إدارة الإيداعات:
-/setdeposits [user_id] [amount] - تعيين إجمالي الإيداعات
-/adddeposit [user_id] [amount] - إضافة إيداع
 
 📊 عرض البيانات:
 /userinfo [user_id] - معلومات كاملة عن المستخدم
 /listusers - قائمة جميع المستخدمين
 /stats - إحصائيات البوت
-
-💎 إدارة VIP:
-/setvip [user_id] [level] - تعيين مستوى VIP
 
 🔰 أوامر عامة:
 /start - القائمة الرئيسية
@@ -429,7 +342,6 @@ def admin_help(message):
     
     bot.reply_to(message, help_text)
 
-print("🔄 Starting bot...")
 print("✅ Bot is running and ready!")
 print("🛠️ All admin commands loaded!")
 bot.infinity_polling()
