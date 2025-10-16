@@ -1,7 +1,7 @@
 import os
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
 
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 if not BOT_TOKEN:
@@ -43,7 +43,7 @@ def save_user(user_data):
     return True
 
 # 🎯 الأوامر الأساسية
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def start(update: Update, context: CallbackContext):
     user = update.effective_user
     print(f"🚀 User {user.id} started the bot")
     
@@ -58,30 +58,30 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await update.message.reply_text(
+    update.message.reply_text(
         f"أهلاً {user.first_name}! 👋\n💰 رصيدك: {user_data['balance']:.1f} USDT\nاختر من الأزرار:",
         reply_markup=reply_markup
     )
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
-    await query.answer()
+    query.answer()
     
     if query.data == "referral":
         bot_username = context.bot.username
         referral_link = f"https://t.me/{bot_username}?start=ref{query.from_user.id}"
-        await query.edit_message_text(f"🎯 رابطك الخاص:\n`{referral_link}`")
+        query.edit_message_text(f"🎯 رابطك الخاص:\n`{referral_link}`")
 
-# 🛠️ الأوامر الإدارية - نبدأ بيها
-async def quick_add_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# 🛠️ الأوامر الإدارية
+def quick_add_balance(update: Update, context: CallbackContext):
     """إضافة رصيد للمستخدم"""
     if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("❌ ليس لديك صلاحية لهذا الأمر!")
+        update.message.reply_text("❌ ليس لديك صلاحية لهذا الأمر!")
         return
     
     try:
         if len(context.args) != 2:
-            await update.message.reply_text("❌ استخدم: /quickadd [user_id] [amount]")
+            update.message.reply_text("❌ استخدم: /quickadd [user_id] [amount]")
             return
         
         target_user_id = int(context.args[0])
@@ -92,20 +92,20 @@ async def quick_add_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user['total_earned'] += amount
         
         response = f"✅ تم إضافة {amount} USDT للمستخدم {target_user_id}\n💰 الرصيد الجديد: {user['balance']:.1f} USDT"
-        await update.message.reply_text(response)
+        update.message.reply_text(response)
         
     except Exception as e:
-        await update.message.reply_text(f"❌ خطأ: {e}")
+        update.message.reply_text(f"❌ خطأ: {e}")
 
-async def set_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def set_balance(update: Update, context: CallbackContext):
     """تعيين رصيد محدد"""
     if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("❌ ليس لديك صلاحية لهذا الأمر!")
+        update.message.reply_text("❌ ليس لديك صلاحية لهذا الأمر!")
         return
     
     try:
         if len(context.args) != 2:
-            await update.message.reply_text("❌ استخدم: /setbalance [user_id] [amount]")
+            update.message.reply_text("❌ استخدم: /setbalance [user_id] [amount]")
             return
         
         target_user_id = int(context.args[0])
@@ -116,20 +116,20 @@ async def set_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user['balance'] = amount
         
         response = f"✅ تم تعيين رصيد المستخدم {target_user_id}\n💰 الرصيد السابق: {old_balance:.1f} USDT\n💰 الرصيد الجديد: {user['balance']:.1f} USDT"
-        await update.message.reply_text(response)
+        update.message.reply_text(response)
         
     except Exception as e:
-        await update.message.reply_text(f"❌ خطأ: {e}")
+        update.message.reply_text(f"❌ خطأ: {e}")
 
-async def set_referrals(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def set_referrals(update: Update, context: CallbackContext):
     """تعيين عدد الإحالات"""
     if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("❌ ليس لديك صلاحية لهذا الأمر!")
+        update.message.reply_text("❌ ليس لديك صلاحية لهذا الأمر!")
         return
     
     try:
         if len(context.args) != 2:
-            await update.message.reply_text("❌ استخدم: /setreferrals [user_id] [count]")
+            update.message.reply_text("❌ استخدم: /setreferrals [user_id] [count]")
             return
         
         target_user_id = int(context.args[0])
@@ -140,20 +140,20 @@ async def set_referrals(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user['referrals_count'] = count
         
         response = f"✅ تم تعيين إحالات المستخدم {target_user_id}\n👥 الإحالات السابقة: {old_count}\n👥 الإحالات الجديدة: {user['referrals_count']}"
-        await update.message.reply_text(response)
+        update.message.reply_text(response)
         
     except Exception as e:
-        await update.message.reply_text(f"❌ خطأ: {e}")
+        update.message.reply_text(f"❌ خطأ: {e}")
 
-async def set_attempts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def set_attempts(update: Update, context: CallbackContext):
     """تعيين محاولات الألعاب"""
     if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("❌ ليس لديك صلاحية لهذا الأمر!")
+        update.message.reply_text("❌ ليس لديك صلاحية لهذا الأمر!")
         return
     
     try:
         if len(context.args) != 2:
-            await update.message.reply_text("❌ استخدم: /setattempts [user_id] [attempts]")
+            update.message.reply_text("❌ استخدم: /setattempts [user_id] [attempts]")
             return
         
         target_user_id = int(context.args[0])
@@ -164,20 +164,20 @@ async def set_attempts(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user['games_played_today'] = attempts
         
         response = f"✅ تم تعيين محاولات المستخدم {target_user_id}\n🎯 المحاولات السابقة: {old_attempts}/3\n🎯 المحاولات الجديدة: {user['games_played_today']}/3"
-        await update.message.reply_text(response)
+        update.message.reply_text(response)
         
     except Exception as e:
-        await update.message.reply_text(f"❌ خطأ: {e}")
+        update.message.reply_text(f"❌ خطأ: {e}")
 
-async def reset_attempts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def reset_attempts(update: Update, context: CallbackContext):
     """إعادة تعيين المحاولات"""
     if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("❌ ليس لديك صلاحية لهذا الأمر!")
+        update.message.reply_text("❌ ليس لديك صلاحية لهذا الأمر!")
         return
     
     try:
         if len(context.args) != 1:
-            await update.message.reply_text("❌ استخدم: /resetattempts [user_id]")
+            update.message.reply_text("❌ استخدم: /resetattempts [user_id]")
             return
         
         target_user_id = int(context.args[0])
@@ -186,20 +186,20 @@ async def reset_attempts(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user['games_played_today'] = 0
         
         response = f"✅ تم إعادة تعيين محاولات المستخدم {target_user_id}\n🎯 الآن لديه 3/3 محاولات"
-        await update.message.reply_text(response)
+        update.message.reply_text(response)
         
     except Exception as e:
-        await update.message.reply_text(f"❌ خطأ: {e}")
+        update.message.reply_text(f"❌ خطأ: {e}")
 
-async def user_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def user_info(update: Update, context: CallbackContext):
     """معلومات المستخدم"""
     if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("❌ ليس لديك صلاحية لهذا الأمر!")
+        update.message.reply_text("❌ ليس لديك صلاحية لهذا الأمر!")
         return
     
     try:
         if len(context.args) != 1:
-            await update.message.reply_text("❌ استخدم: /userinfo [user_id]")
+            update.message.reply_text("❌ استخدم: /userinfo [user_id]")
             return
         
         user_id = int(context.args[0])
@@ -218,20 +218,20 @@ async def user_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 💳 الإيداعات: {user['total_deposits']:.1f} USDT
 🏆 الأرباح: {user['total_earned']:.1f} USDT"""
         
-        await update.message.reply_text(info_text)
+        update.message.reply_text(info_text)
         
     except Exception as e:
-        await update.message.reply_text(f"❌ خطأ: {e}")
+        update.message.reply_text(f"❌ خطأ: {e}")
 
-async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def list_users(update: Update, context: CallbackContext):
     """قائمة المستخدمين"""
     if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("❌ ليس لديك صلاحية لهذا الأمر!")
+        update.message.reply_text("❌ ليس لديك صلاحية لهذا الأمر!")
         return
     
     try:
         if len(users_db) == 0:
-            await update.message.reply_text("❌ لا يوجد مستخدمين في قاعدة البيانات")
+            update.message.reply_text("❌ لا يوجد مستخدمين في قاعدة البيانات")
             return
         
         users_list = "📊 قائمة المستخدمين:\n\n"
@@ -241,15 +241,15 @@ async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(users_db) > 15:
             users_list += f"\n📎 وإجمالي {len(users_db)} مستخدم"
         
-        await update.message.reply_text(users_list)
+        update.message.reply_text(users_list)
         
     except Exception as e:
-        await update.message.reply_text(f"❌ خطأ: {e}")
+        update.message.reply_text(f"❌ خطأ: {e}")
 
-async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def admin_help(update: Update, context: CallbackContext):
     """مساعدة الأوامر الإدارية"""
     if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("❌ ليس لديك صلاحية لهذا الأمر!")
+        update.message.reply_text("❌ ليس لديك صلاحية لهذا الأمر!")
         return
     
     help_text = """
@@ -269,35 +269,38 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 📊 عرض البيانات:
 /userinfo [user_id] - معلومات المستخدم
 /listusers - قائمة جميع المستخدمين
+/adminhelp - مساعدة الأوامر الإدارية
 """
     
-    await update.message.reply_text(help_text)
+    update.message.reply_text(help_text)
 
 def main():
     try:
         print("🔄 Starting bot...")
-        application = Application.builder().token(BOT_TOKEN).build()
+        updater = Updater(BOT_TOKEN, use_context=True)
+        dispatcher = updater.dispatcher
         
         # الأوامر الأساسية
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(CallbackQueryHandler(button_handler))
+        dispatcher.add_handler(CommandHandler("start", start))
+        dispatcher.add_handler(CallbackQueryHandler(button_handler))
         
         # الأوامر الإدارية
-        application.add_handler(CommandHandler("quickadd", quick_add_balance))
-        application.add_handler(CommandHandler("setbalance", set_balance))
-        application.add_handler(CommandHandler("setreferrals", set_referrals))
-        application.add_handler(CommandHandler("setattempts", set_attempts))
-        application.add_handler(CommandHandler("resetattempts", reset_attempts))
-        application.add_handler(CommandHandler("userinfo", user_info))
-        application.add_handler(CommandHandler("listusers", list_users))
-        application.add_handler(CommandHandler("adminhelp", admin_help))
+        dispatcher.add_handler(CommandHandler("quickadd", quick_add_balance))
+        dispatcher.add_handler(CommandHandler("setbalance", set_balance))
+        dispatcher.add_handler(CommandHandler("setreferrals", set_referrals))
+        dispatcher.add_handler(CommandHandler("setattempts", set_attempts))
+        dispatcher.add_handler(CommandHandler("resetattempts", reset_attempts))
+        dispatcher.add_handler(CommandHandler("userinfo", user_info))
+        dispatcher.add_handler(CommandHandler("listusers", list_users))
+        dispatcher.add_handler(CommandHandler("adminhelp", admin_help))
         
         print("✅ Bot is running and ready to receive messages...")
         print("🛠️ Admin commands loaded:")
         print("   /quickadd, /setbalance, /setreferrals, /setattempts")
         print("   /resetattempts, /userinfo, /listusers, /adminhelp")
         
-        application.run_polling()
+        updater.start_polling()
+        updater.idle()
         
     except Exception as e:
         print(f"❌ Error: {e}")
