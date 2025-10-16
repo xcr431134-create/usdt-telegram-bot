@@ -421,7 +421,6 @@ print("💾 Database: Supabase (Permanent Storage)")
 print("✅ Bot is running and ready!")
 print("🛠️ All admin commands loaded!")
 bot.infinity_polling()
-
 # =============================================
 # ⚡ كود تشغيل السيرفر لـ Render
 # =============================================
@@ -439,3 +438,7 @@ if __name__ == "__main__":
     # تشغيل البوت وتطبيق الويب
     port = int(os.environ.get("PORT", 10000))
     web_app.run(host='0.0.0.0', port=port)
+    # تشغيل البوت
+if __name__ == "__main__":
+    print("🚀 Starting Telegram Bot...")
+    bot.infinity_polling()
