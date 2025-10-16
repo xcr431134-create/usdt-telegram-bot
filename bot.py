@@ -293,6 +293,8 @@ def user_info(message):
         user_id = int(parts[1])
         user = get_user(user_id)
         
+        remaining_attempts = 3 - user['games_played_today']
+        
         info_text = f"""
 📊 معلومات المستخدم:
 
@@ -300,7 +302,7 @@ def user_info(message):
 👤 الاسم: {user['first_name']}
 💰 الرصيد: {user['balance']:.1f} USDT
 👥 الإحالات: {user['referrals_count']}
-🎯 المحاولات: {user['games_played_today']}/3
+🎯 المحاولات: {user['games_played_today']}/3 (متبقي: {remaining_attempts})
 💎 VIP: {user['vip_level']}
 🎮 الألعاب: {user['total_games_played']}
 💳 الإيداعات: {user['total_deposits']:.1f} USDT
@@ -323,10 +325,10 @@ def list_users(message):
             return
         
         users_list = "📊 قائمة المستخدمين:\n\n"
-        for i, (user_id, user_data) in enumerate(list(users_db.items())[:20], 1):
+        for i, (user_id, user_data) in enumerate(list(users_db.items())[:15], 1):
             users_list += f"{i}. {user_data['first_name']} - {user_id} - {user_data['balance']:.1f} USDT - {user_data['referrals_count']} إحالة\n"
         
-        if len(users_db) > 20:
+        if len(users_db) > 15:
             users_list += f"\n📎 وإجمالي {len(users_db)} مستخدم"
         
         bot.reply_to(message, users_list)
@@ -344,15 +346,17 @@ def stats(message):
         total_balance = sum(user['balance'] for user in users_db.values())
         total_referrals = sum(user['referrals_count'] for user in users_db.values())
         total_deposits = sum(user['total_deposits'] for user in users_db.values())
+        active_users = sum(1 for user in users_db.values() if user['balance'] > 0 or user['games_played_today'] > 0)
         
         stats_text = f"""
 📈 إحصائيات البوت:
 
-👥 المستخدمين: {len(users_db)}
+👥 إجمالي المستخدمين: {len(users_db)}
+👤 المستخدمين النشطين: {active_users}
 💰 إجمالي الرصيد: {total_balance:.1f} USDT
 👥 إجمالي الإحالات: {total_referrals}
 💳 إجمالي الإيداعات: {total_deposits:.1f} USDT
-🎯 المستخدمين النشطين: {sum(1 for user in users_db.values() if user['games_played_today'] > 0)}"""
+🎯 مستخدمين بلعبوا اليوم: {sum(1 for user in users_db.values() if user['games_played_today'] > 0)}"""
         
         bot.reply_to(message, stats_text)
         
@@ -417,6 +421,10 @@ def admin_help(message):
 
 💎 إدارة VIP:
 /setvip [user_id] [level] - تعيين مستوى VIP
+
+🔰 أوامر عامة:
+/start - القائمة الرئيسية
+/myid - عرض الآيدي
 """
     
     bot.reply_to(message, help_text)
