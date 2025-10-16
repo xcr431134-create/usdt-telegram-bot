@@ -1,0 +1,2 @@
+pytelegrambotapi==4.19.1
+supabase==2.3.1
