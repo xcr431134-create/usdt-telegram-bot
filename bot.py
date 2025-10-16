@@ -421,3 +421,21 @@ print("💾 Database: Supabase (Permanent Storage)")
 print("✅ Bot is running and ready!")
 print("🛠️ All admin commands loaded!")
 bot.infinity_polling()
+
+# =============================================
+# ⚡ كود تشغيل السيرفر لـ Render
+# =============================================
+if __name__ == "__main__":
+    import os
+    from flask import Flask
+    
+    # إنشاء تطبيق Flask بورت إضافي
+    web_app = Flask(__name__)
+    
+    @web_app.route('/')
+    def home():
+        return "🤖 Bot is running!"
+    
+    # تشغيل البوت وتطبيق الويب
+    port = int(os.environ.get("PORT", 10000))
+    web_app.run(host='0.0.0.0', port=port)
