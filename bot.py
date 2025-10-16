@@ -47,7 +47,7 @@ def main():
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CallbackQueryHandler(button_handler))
         
-        print("✅ Bot is running...")
+        print("✅ Bot is running and ready to receive messages...")
         application.run_polling()
         
     except Exception as e:
