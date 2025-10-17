@@ -24,7 +24,7 @@ def health_check():
     return "✅ OK", 200
 
 # 🔧 الإعدادات من environment variables
-BOT_TOKEN = os.getenv('BOT_TOKEN', '7973697789:AAFXfYXTgYaTAF1j7IGhp2kiv-kxrN1uImk')
+BOT_TOKEN = os.getenv('BOT_TOKEN')
 ADMIN_IDS = [int(os.getenv('ADMIN_ID', '8400225549'))]
 DATA_FILE = "users_data.json"
 
