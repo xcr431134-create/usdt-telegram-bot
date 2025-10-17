@@ -2,18 +2,83 @@ import os
 import telebot
 import json
 import random
+import threading
+import gspread
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from datetime import datetime, timedelta
 import shutil
 import time
 import requests
+from google.oauth2.service_account import Credentials
 
-BOT_TOKEN = "7973697789:AAFXfYXTgYaTAF1j7IGhp2kiv-kxrN1uImk"
-bot = telebot.TeleBot(BOT_TOKEN)
-ADMIN_IDS = [8400225549]
-
-# ملف تخزين البيانات
+# 🔧 الإعدادات من environment variables
+BOT_TOKEN = os.getenv('BOT_TOKEN', '7973697789:AAFXfYXTgYaTAF1j7IGhp2kiv-kxrN1uImk')
+ADMIN_IDS = [int(os.getenv('ADMIN_ID', '8400225549'))]
 DATA_FILE = "users_data.json"
+
+bot = telebot.TeleBot(BOT_TOKEN)
+
+# 📊 Google Sheets Integration
+def init_google_sheets():
+    """تهيئة الاتصال بـ Google Sheets"""
+    try:
+        # استخدام environment variable بدلاً من ملف
+        creds_json = os.getenv('GOOGLE_SHEETS_CREDENTIALS')
+        if creds_json:
+            creds_dict = json.loads(creds_json)
+            scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+            creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+            client = gspread.authorize(creds)
+            return client.open("Bot-Users").sheet1
+    except Exception as e:
+        print(f"❌ خطأ في تهيئة Google Sheets: {e}")
+    return None
+
+def sync_user_to_sheets(user_data):
+    """مزامنة بيانات المستخدم مع Google Sheets"""
+    try:
+        sheet = init_google_sheets()
+        if not sheet:
+            return False
+            
+        # البحث عن المستخدم في الورقة
+        users = sheet.get_all_records()
+        user_id = user_data['user_id']
+        
+        # تحضير البيانات
+        row_data = [
+            user_data['user_id'],
+            user_data.get('first_name', ''),
+            user_data.get('balance', 0),
+            user_data.get('referrals_count', 0),
+            user_data.get('referrals_new', 0),
+            user_data.get('games_played_today', 0),
+            user_data.get('total_games_played', 0),
+            user_data.get('total_earned', 0),
+            user_data.get('total_deposits', 0),
+            user_data.get('vip_level', 0),
+            user_data.get('registration_date', ''),
+            user_data.get('last_activity', ''),
+            user_data.get('withdrawal_address', ''),
+            user_data.get('registration_days', 0)
+        ]
+        
+        # البحث عن الصف الموجود أو إضافة جديد
+        found = False
+        for i, user in enumerate(users, start=2):  # start=2 لأن الصف الأول للعناوين
+            if str(user['user_id']) == str(user_id):
+                sheet.update(f'A{i}:N{i}', [row_data])
+                found = True
+                break
+        
+        if not found:
+            sheet.append_row(row_data)
+            
+        print(f"✅ تم مزامنة user_id {user_id} مع Google Sheets")
+        return True
+    except Exception as e:
+        print(f"❌ خطأ في المزامنة مع Google Sheets: {e}")
+        return False
 
 def load_users():
     """تحميل البيانات من الملف"""
@@ -30,11 +95,16 @@ def load_users():
         return {}
 
 def save_users(users_data):
-    """حفظ البيانات في الملف"""
+    """حفظ البيانات في الملف ومزامنة مع Google Sheets"""
     try:
         with open(DATA_FILE, 'w', encoding='utf-8') as f:
             json.dump(users_data, f, ensure_ascii=False, indent=2)
         print(f"💾 تم حفظ {len(users_data)} مستخدم في الذاكرة")
+        
+        # مزامنة جميع المستخدمين مع Google Sheets
+        for user_data in users_data.values():
+            sync_user_to_sheets(user_data)
+            
         return True
     except Exception as e:
         print(f"❌ خطأ في حفظ البيانات: {e}")
@@ -111,6 +181,10 @@ def save_user(user_data):
     users_data[user_id] = user_data
     
     print(f"💾 حفظ بيانات user_id: {user_id}, الرصيد: {user_data['balance']}")
+    
+    # مزامنة مع Google Sheets
+    sync_user_to_sheets(user_data)
+    
     return save_users(users_data)
 
 def update_user_activity(user_id):
@@ -155,25 +229,21 @@ def can_withdraw(user):
     has_address = bool(user.get('withdrawal_address', ''))
     return has_10_days and has_150_balance and has_address
 
-# 🎯 الواجهة الرئيسية الجديدة
+# 🎯 الواجهة الرئيسية
 @bot.message_handler(commands=['start', 'profile'])
 def start_command(message):
     try:
         user = get_user(message.from_user.id)
-        # ✅ الإصلاح: حفظ الاسم الأول بشكل صحيح
         user['first_name'] = message.from_user.first_name or "مستخدم"
         user['username'] = message.from_user.username or ""
         update_user_activity(message.from_user.id)
         
-        # حساب المحاولات المتبقية
         remaining_attempts, total_attempts, extra_attempts = get_remaining_attempts(user)
         vip_name = get_vip_level_name(user['vip_level'])
         mining_time = get_mining_reward_time()
         
-        # ✅ الإصلاح: استخدام الاسم المحفوظ بشكل صحيح
         user_name = user['first_name'] if user['first_name'] else "مستخدم"
         
-        # النص الرئيسي
         profile_text = f"""📊 الملف الشخصي
 
 👤 المستخدم: {user_name}
@@ -191,7 +261,6 @@ def start_command(message):
 💳 إجمالي الإيداعات: {user['total_deposits']:.1f} USDT
 📅 تاريخ التسجيل: {user['registration_date'].split()[0]}"""
 
-        # الأزرار
         keyboard = InlineKeyboardMarkup(row_width=2)
         keyboard.add(
             InlineKeyboardButton("🎮 الألعاب", callback_data="games"),
@@ -244,15 +313,12 @@ def play_slot(call):
             bot.answer_callback_query(call.id, "❌ لا توجد محاولات متبقية اليوم!", show_alert=True)
             return
         
-        # خفض المحاولات
         user['games_played_today'] += 1
         user['total_games_played'] += 1
         
-        # محاكاة لعبة السلوت
         symbols = ["🍒", "🍋", "🍊", "🍇", "🔔", "💎"]
         result = [random.choice(symbols) for _ in range(3)]
         
-        # حساب الربح
         if result[0] == result[1] == result[2]:
             win_amount = 2.5
             win_text = "🎉 ربح كبير!"
@@ -263,14 +329,11 @@ def play_slot(call):
             win_amount = 0
             win_text = "😞 حاول مرة أخرى"
         
-        # تحديث الرصيد
         user['balance'] += win_amount
         if win_amount > 0:
             user['total_earned'] += win_amount
         
         save_user(user)
-        
-        # تحديث المحاولات المتبقية
         remaining_attempts, total_attempts, _ = get_remaining_attempts(user)
         
         game_result = f"""🎰 لعبة السلوت
@@ -301,16 +364,13 @@ def play_dice(call):
             bot.answer_callback_query(call.id, "❌ لا توجد محاولات متبقية اليوم!", show_alert=True)
             return
         
-        # خفض المحاولات
         user['games_played_today'] += 1
         user['total_games_played'] += 1
         
-        # محاكاة لعبة النرد
         dice1 = random.randint(1, 6)
         dice2 = random.randint(1, 6)
         total = dice1 + dice2
         
-        # حساب الربح
         if total == 7:
             win_amount = 2.5
             win_text = "🎉 ربح كبير! (رقم الحظ)"
@@ -324,14 +384,11 @@ def play_dice(call):
             win_amount = 0
             win_text = "😞 حاول مرة أخرى"
         
-        # تحديث الرصيد
         user['balance'] += win_amount
         if win_amount > 0:
             user['total_earned'] += win_amount
         
         save_user(user)
-        
-        # تحديث المحاولات المتبقية
         remaining_attempts, total_attempts, _ = get_remaining_attempts(user)
         
         game_result = f"""🎲 لعبة النرد
@@ -390,7 +447,6 @@ def handle_vip_purchase(call):
         
         vip_name = vip_names.get(vip_type, 'VIP')
         
-        # إرسال طلب الشراء للادمن
         request_text = f"""🛒 طلب شراء جديد:
 
 👤 المستخدم: {user['first_name']} 
@@ -402,14 +458,12 @@ def handle_vip_purchase(call):
 
 ⏰ الرجاء التواصل مع المستخدم مباشرة بالضغط على الرابط أعلاه"""
         
-        # إرسال لكل الأدمنز
         for admin_id in ADMIN_IDS:
             try:
                 bot.send_message(admin_id, request_text, parse_mode='Markdown')
             except Exception as e:
                 print(f"❌ Failed to send to admin {admin_id}: {e}")
         
-        # تأكيد للمستخدم
         bot.answer_callback_query(
             call.id, 
             f"✅ تم إرسال طلب شراء {vip_name} للإدارة\nسيتم التواصل معك قريباً", 
@@ -425,7 +479,6 @@ def handle_withdraw(call):
         user = get_user(call.from_user.id)
         
         if not can_withdraw(user):
-            # رسالة الخطأ مع الشروط الجديدة
             if user.get('registration_days', 0) < 10:
                 error_msg = f"❌ تحتاج إلى 10 أيام تسجيل على الأقل للسحب\n📅 أيامك الحالية: {user.get('registration_days', 0)} يوم"
             elif user['balance'] < 150:
@@ -453,7 +506,6 @@ def show_withdrawal_options(message, user):
         )
         keyboard.add(InlineKeyboardButton("🔙 رجوع", callback_data="back_to_profile"))
         
-        # إذا ما عندو عنوان محفظة، اطلب منه
         if not user.get('withdrawal_address'):
             msg = bot.send_message(
                 message.chat.id,
@@ -478,7 +530,7 @@ def show_withdrawal_options(message, user):
 def process_withdrawal_address(message, user):
     try:
         address = message.text.strip()
-        if len(address) < 10:  # تحقق بسيط
+        if len(address) < 10:
             msg = bot.send_message(
                 message.chat.id,
                 "❌ عنوان غير صحيح! الرجاء إرسال عنوان محفظة USDT (TRC20) صحيح:"
@@ -498,17 +550,15 @@ def process_withdrawal(call):
         user = get_user(call.from_user.id)
         withdraw_type = call.data.replace('withdraw_', '')
         
-        # حساب المبلغ
         if withdraw_type == '150':
             amount = 150.0
         elif withdraw_type == '300':
             amount = 300.0
         elif withdraw_type == '500':
             amount = 500.0
-        else:  # withdraw_all
+        else:
             amount = user['balance']
         
-        # التحقق من الرصيد والشروط
         if user['balance'] < amount:
             bot.answer_callback_query(call.id, f"❌ رصيدك غير كافي! الرصيد: {user['balance']:.1f} USDT", show_alert=True)
             return
@@ -521,11 +571,9 @@ def process_withdrawal(call):
             bot.answer_callback_query(call.id, f"❌ تحتاج إلى 10 أيام تسجيل للسحب\n📅 أيامك: {user.get('registration_days', 0)}", show_alert=True)
             return
         
-        # خصم المبلغ
         user['balance'] -= amount
         save_user(user)
         
-        # إرسال طلب السحب للادمن
         withdraw_text = f"""🏦 طلب سحب جديد:
 
 👤 المستخدم: {user['first_name']} 
@@ -539,14 +587,12 @@ def process_withdrawal(call):
 
 ✅ تم خصم المبلغ من رصيد المستخدم"""
         
-        # إرسال لكل الأدمنز
         for admin_id in ADMIN_IDS:
             try:
                 bot.send_message(admin_id, withdraw_text, parse_mode='Markdown')
             except Exception as e:
                 print(f"❌ Failed to send to admin {admin_id}: {e}")
         
-        # تأكيد للمستخدم
         bot.answer_callback_query(
             call.id, 
             f"✅ تم إرسال طلب سحب {amount:.1f} USDT للإدارة\nسيتم المعالجة خلال 24 ساعة", 
@@ -589,25 +635,20 @@ def handle_referral(call):
     except Exception as e:
         print(f"❌ خطأ في handle_referral: {e}")
 
-# 🔙 رجوع للبروفايل - الإصلاح الكامل
+# 🔙 رجوع للبروفايل
 @bot.callback_query_handler(func=lambda call: call.data == "back_to_profile")
 def back_to_profile(call):
     try:
         user = get_user(call.from_user.id)
         update_user_activity(call.from_user.id)
         
-        # ✅ الإصلاح: جلب البيانات المحدثة
         user = get_user(call.from_user.id)
-        
-        # حساب المحاولات المتبقية
         remaining_attempts, total_attempts, extra_attempts = get_remaining_attempts(user)
         vip_name = get_vip_level_name(user['vip_level'])
         mining_time = get_mining_reward_time()
         
-        # ✅ الإصلاح: استخدام الاسم بشكل صحيح
         user_name = user['first_name'] if user['first_name'] else "مستخدم"
         
-        # النص الرئيسي المعدل
         profile_text = f"""📊 الملف الشخصي
 
 👤 المستخدم: {user_name}
@@ -625,7 +666,6 @@ def back_to_profile(call):
 💳 إجمالي الإيداعات: {user['total_deposits']:.1f} USDT
 📅 تاريخ التسجيل: {user['registration_date'].split()[0]}"""
 
-        # الأزرار
         keyboard = InlineKeyboardMarkup(row_width=2)
         keyboard.add(
             InlineKeyboardButton("🎮 الألعاب", callback_data="games"),
@@ -637,7 +677,6 @@ def back_to_profile(call):
             InlineKeyboardButton("🆘 الدعم الفني", url="https://t.me/Trust_wallet_Support_4")
         )
         
-        # تعديل الرسالة الحالية
         bot.edit_message_text(
             profile_text, 
             call.message.chat.id, 
@@ -651,19 +690,15 @@ def back_to_profile(call):
 @bot.message_handler(func=lambda message: message.text and message.text.startswith('/start ref'))
 def handle_referral_start(message):
     try:
-        # استخراج آيدي المُحيل من الرابط
         referrer_id = message.text.split('ref')[-1]
         
-        # المستخدم الجديد
         new_user = get_user(message.from_user.id)
         new_user['first_name'] = message.from_user.first_name or "مستخدم"
         new_user['username'] = message.from_user.username or ""
         
-        # المُحيل
         if referrer_id.isdigit():
             referrer = get_user(int(referrer_id))
-            if referrer['user_id'] != new_user['user_id']:  # منع الاحالة الذاتية
-                # منح مكافأة الإحالة
+            if referrer['user_id'] != new_user['user_id']:
                 referral_bonus = 1.0
                 referrer['balance'] += referral_bonus
                 referrer['total_earned'] += referral_bonus
@@ -672,7 +707,6 @@ def handle_referral_start(message):
                 
                 save_user(referrer)
                 
-                # إعلام المُحيل
                 try:
                     bot.send_message(
                         int(referrer_id),
@@ -683,7 +717,6 @@ def handle_referral_start(message):
                 except:
                     pass
         
-        # عرض الواجهة للمستخدم الجديد
         start_command(message)
     except Exception as e:
         print(f"❌ خطأ في handle_referral_start: {e}")
@@ -700,7 +733,6 @@ def myid(message):
     except Exception as e:
         print(f"❌ خطأ في myid: {e}")
 
-# 💰 إدارة الرصيد
 @bot.message_handler(commands=['quickadd'])
 def quick_add(message):
     if message.from_user.id not in ADMIN_IDS:
@@ -729,7 +761,6 @@ def quick_add(message):
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ: {e}")
 
-# 👥 إدارة الإحالات
 @bot.message_handler(commands=['addreferral'])
 def add_referral(message):
     if message.from_user.id not in ADMIN_IDS:
@@ -749,7 +780,6 @@ def add_referral(message):
         user = get_user(user_id)
         user['referrals_count'] += 1
         user['referrals_new'] += 1
-        # منح مكافأة الإحالة
         user['balance'] += 1.0
         user['total_earned'] += 1.0
         
@@ -760,7 +790,6 @@ def add_referral(message):
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ: {e}")
 
-# 💎 إدارة VIP
 @bot.message_handler(commands=['setvip'])
 def set_vip(message):
     if message.from_user.id not in ADMIN_IDS:
@@ -792,9 +821,8 @@ def set_vip(message):
         bot.reply_to(message, f"✅ تم تعيين مستوى VIP للمستخدم {user_id}\n💎 السابق: {old_vip}\n💎 الجديد: {new_vip}")
         
     except Exception as e:
-        bot.rereply_to(message, f"❌ خطأ: {e}")
+        bot.reply_to(message, f"❌ خطأ: {e}")
 
-# 📊 عرض البيانات
 @bot.message_handler(commands=['userinfo'])
 def user_info(message):
     if message.from_user.id not in ADMIN_IDS:
@@ -853,7 +881,6 @@ def stats(message):
         total_deposits = sum(user['total_deposits'] for user in users)
         active_users = sum(1 for user in users if user['balance'] > 0 or user['games_played_today'] > 0)
         
-        # إحصائيات VIP
         vip_counts = {0: 0, 1: 0, 2: 0, 3: 0}
         for user in users:
             vip_level = user.get('vip_level', 0)
@@ -884,7 +911,6 @@ def stats(message):
 # 🆕 نظام النسخ الاحتياطي والاستعادة
 # =============================================
 
-# 📥 أمر تحميل النسخة الاحتياطية
 @bot.message_handler(commands=['backup'])
 def backup_data(message):
     if message.from_user.id not in ADMIN_IDS:
@@ -892,14 +918,11 @@ def backup_data(message):
         return
     
     try:
-        # إنشاء نسخة احتياطية مع timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_file = f"backup_users_data_{timestamp}.json"
         
-        # نسخ الملف
         shutil.copy2(DATA_FILE, backup_file)
         
-        # إرسال الملف للمسؤول
         with open(backup_file, 'rb') as f:
             bot.send_document(
                 message.chat.id, 
@@ -914,7 +937,6 @@ def backup_data(message):
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ في النسخ الاحتياطي: {e}")
 
-# 📤 أمر استعادة النسخة الاحتياطية
 @bot.message_handler(commands=['restore'])
 def restore_data(message):
     if message.from_user.id not in ADMIN_IDS:
@@ -922,7 +944,6 @@ def restore_data(message):
         return
     
     try:
-        # طلب الملف للاستعادة
         msg = bot.reply_to(message, "📤 الرجاء إرسال ملف النسخة الاحتياطية (JSON):")
         bot.register_next_step_handler(msg, process_restore_file)
         
@@ -935,16 +956,13 @@ def process_restore_file(message):
             bot.reply_to(message, "❌ لم يتم إرسال ملف!")
             return
         
-        # تحميل الملف
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         
-        # حفظ الملف المؤقت
         temp_file = "temp_restore.json"
         with open(temp_file, 'wb') as f:
             f.write(downloaded_file)
         
-        # التحقق من صحة الملف
         with open(temp_file, 'r', encoding='utf-8') as f:
             test_data = json.load(f)
         
@@ -952,14 +970,11 @@ def process_restore_file(message):
             bot.reply_to(message, "❌ الملف غير صالح!")
             return
         
-        # إنشاء نسخة احتياطية من الملف الحالي قبل الاستعادة
         backup_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         shutil.copy2(DATA_FILE, f"pre_restore_backup_{backup_timestamp}.json")
         
-        # استبدال الملف الرئيسي
         shutil.copy2(temp_file, DATA_FILE)
         
-        # تنظيف الملف المؤقت
         os.remove(temp_file)
         
         bot.reply_to(
@@ -972,7 +987,6 @@ def process_restore_file(message):
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ في استعادة الملف: {e}")
 
-# 📝 أمر نسخ البيانات يدوياً
 @bot.message_handler(commands=['copydata'])
 def copy_user_data(message):
     if message.from_user.id not in ADMIN_IDS:
@@ -994,11 +1008,9 @@ def copy_user_data(message):
             bot.reply_to(message, f"❌ المستخدم المصدر {from_user_id} غير موجود!")
             return
         
-        # نسخ البيانات
         from_user_data = users_data[str(from_user_id)]
         to_user_data = get_user(to_user_id)
         
-        # نسخ الحقول المهمة
         fields_to_copy = [
             'balance', 'referrals_count', 'referrals_new', 'total_earned',
             'total_deposits', 'vip_level', 'games_played_today', 'total_games_played'
@@ -1022,7 +1034,6 @@ def copy_user_data(message):
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ في نسخ البيانات: {e}")
 
-# 📍 أمر عرض موقع الملف
 @bot.message_handler(commands=['fileinfo'])
 def file_info(message):
     if message.from_user.id not in ADMIN_IDS:
@@ -1058,10 +1069,9 @@ def file_info(message):
 # =============================================
 
 def heartbeat_loop():
-    """إرسال نبضات دورية بإستخدام try/except"""
+    """إرسال نبضات دورية"""
     while True:
         try:
-            # استخدام روابط موثوقة فقط
             urls = [
                 "https://www.google.com",
                 "https://www.cloudflare.com"
@@ -1075,12 +1085,11 @@ def heartbeat_loop():
                 except:
                     print(f"⚠️ فشل النبضة إلى {url}")
             
-            # الانتظار 10 دقائق بين كل نبضة (تقليل الضغط)
             time.sleep(600)
             
         except Exception as e:
             print(f"❌ خطأ في النبضات: {e}")
-            time.sleep(60)  # انتظار أقصر في حالة الخطأ
+            time.sleep(60)
 
 # =============================================
 # 🚀 تشغيل البوت المحسن
@@ -1089,17 +1098,17 @@ def heartbeat_loop():
 def run_bot():
     """تشغيل البوت مع معالجة الأخطاء"""
     print("🔄 Starting bot...")
-    print("💾 Database: JSON File (Permanent Storage)")
+    print("💾 Database: JSON File + Google Sheets Sync")
     print("🎮 Games: Slot & Dice (3 attempts + referrals)")
     print("💎 VIP Services: Bronze, Silver, Gold")
     print("💰 Withdrawal: 150 USDT min + 10 days required")
     print("🎁 Referral Bonus: 1 USDT per referral")
     print("💓 Heartbeat system: Active (10 min intervals)")
-    print("📦 Backup system: Active - /backup, /restore, /copydata, /fileinfo")
+    print("📊 Google Sheets Integration: Ready")
     print("✅ Bot is running and ready!")
     print("🛠️ All admin commands loaded!")
     
-    # تشغيل نظام النبضات في thread منفصل
+    # تشغيل نظام النبضات
     try:
         heartbeat_thread = threading.Thread(target=heartbeat_loop)
         heartbeat_thread.daemon = True
