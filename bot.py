@@ -5,8 +5,8 @@ from datetime import datetime
 from supabase import create_client
 
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
-SUPABASE_URL = "https://vgkwwjzkngkobhmvfeio.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZna3d3anprbmdrb2JobXZmZWlvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA2MTYzMzQsImV4cCI6MjA3NjE5MjMzNH0.rcBwsylvtKGI4FroTc4lpJtHMfMaZ_emEXJyBv_9YZM"
+SUPABASE_URL = "https://fkuwskcffyslzbjmegsq.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZrdXdza2NmZnlzbHpiam1lZ3NxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA1Mjg5NTIsImV4cCI6MjA3NjEwNDk1Mn0.R-gExYyhHxuMK4qE-49yQWC9tIKbmjXkjX_UxHE6YHU"
 
 if not BOT_TOKEN:
     print("❌ ERROR: BOT_TOKEN not found!")
