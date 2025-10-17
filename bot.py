@@ -57,7 +57,7 @@ def get_user(user_id):
     # حفظ في Supabase إذا متاح
     if supabase:
         try:
-            supabase.table('users').insert(user_data).execute()
+            supabase.table('users').upsert(user_data).execute()
             print(f"✅ Created new user {user_id} in Supabase")
         except Exception as e:
             print(f"❌ Error creating user in Supabase: {e}")
@@ -67,8 +67,9 @@ def get_user(user_id):
 def save_user(user_data):
     if supabase:
         try:
-            # تحديث البيانات في Supabase
-            supabase.table('users').update({
+            # استخدام upsert بدل update لحل مشكلة duplicate key
+            response = supabase.table('users').upsert({
+                'user_id': user_data['user_id'],
                 'username': user_data['username'],
                 'first_name': user_data['first_name'],
                 'balance': user_data['balance'],
@@ -79,7 +80,7 @@ def save_user(user_data):
                 'total_deposits': user_data['total_deposits'],
                 'vip_level': user_data['vip_level'],
                 'last_activity': user_data['last_activity']
-            }).eq('user_id', user_data['user_id']).execute()
+            }).execute()
             
             print(f"💾 Saved user {user_data['user_id']} to Supabase")
             return True
