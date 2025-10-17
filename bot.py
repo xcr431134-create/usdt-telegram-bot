@@ -1154,24 +1154,50 @@ def start_bot_polling():
         print("🔄 Restarting bot in 30 seconds...")
         time.sleep(30)
         start_bot_polling()  # إعادة التشغيل التلقائي
+def start_bot_polling():
+    """تشغيل البوت في thread منفصل"""
+    print("🤖 Starting Telegram Bot Polling...")
+    try:
+        bot.infinity_polling(timeout=60, long_polling_timeout=60, restart_on_change=True)
+    except Exception as e:
+        print(f"❌ Bot polling error: {e}")
+        print("🔄 Restarting bot in 30 seconds...")
+        time.sleep(30)
+        start_bot_polling()
 
 def run_bot():
     """تشغيل البوت مع معالجة الأخطاء"""
     print("🔄 Starting bot system...")
     print(f"✅ BOT_TOKEN: {BOT_TOKEN[:10]}...")
     
-    # ✅ ابدأ بالبوت أولاً في thread منفصل
+    # ابدأ البوت أولاً
     print("🤖 Starting Telegram Bot in background thread...")
     bot_thread = threading.Thread(target=start_bot_polling)
     bot_thread.daemon = True
     bot_thread.start()
     
-    # ✅ ثم شغل Flask في main thread
-    port = int(os.environ.get('PORT', 10000))
-    print(f"🌐 Starting Flask server on port {port}...")
+    # انتظر ثم شغل Flask
+    time.sleep(3)
     
-    # هذا اللي رح يخلي السيرفر شغال باستمرار
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    # جرب عدة بورتات
+    ports = [10000, 10001, 8080, 5000]
+    for port in ports:
+        try:
+            print(f"🌐 Trying to start Flask on port {port}...")
+            app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False, threaded=True)
+            break
+        except OSError as e:
+            if "Address already in use" in str(e):
+                print(f"⚠️ Port {port} is busy, trying next...")
+                continue
+            else:
+                print(f"❌ Flask error: {e}")
+                break
+    else:
+        print("❌ All ports are busy, running bot without Flask...")
+        # استمر في تشغيل البوت حتى بدون Flask
+        while True:
+            time.sleep(60)
 
 if __name__ == "__main__":
     run_bot()
