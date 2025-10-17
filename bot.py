@@ -4,6 +4,11 @@ import json
 import random
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from datetime import datetime, timedelta
+import shutil
+import time
+import requests
+import threading
+from flask import Flask
 
 BOT_TOKEN = "7973697789:AAFXfYXTgYaTAF1j7IGhp2kiv-kxrN1uImk"
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -548,10 +553,54 @@ def handle_referral(call):
         parse_mode='Markdown'
     )
 
-# 🔙 رجوع للبروفايل
+# 🔙 رجوع للبروفايل - الإصلاح الجديد
 @bot.callback_query_handler(func=lambda call: call.data == "back_to_profile")
 def back_to_profile(call):
-    start_command(call.message)
+    user = get_user(call.from_user.id)
+    update_user_activity(call.from_user.id)
+    
+    # حساب المحاولات المتبقية
+    remaining_attempts, total_attempts, extra_attempts = get_remaining_attempts(user)
+    vip_name = get_vip_level_name(user['vip_level'])
+    mining_time = get_mining_reward_time()
+    
+    # النص الرئيسي المعدل
+    profile_text = f"""📊 الملف الشخصي
+
+👤 المستخدم: {user['first_name'] or 'User'} 
+🆔 المعرف: {call.from_user.id}
+💰 الرصيد: {user['balance']:.1f} USDT
+👥 الإحالات: {user['referrals_count']} مستخدم
+📈 الإحالات الجديدة: {user.get('referrals_new', 0)}/{user['referrals_count']}
+🏆 مستوى VIP: {vip_name}
+🎯 المحاولات المتبقية: {remaining_attempts} ({total_attempts} أساسية + {extra_attempts} إضافية)
+📅 أيام التسجيل: {user.get('registration_days', 0)} يوم
+
+⏰ مكافأة التعدين: {mining_time}
+
+💎 إجمالي الأرباح: {user['total_earned']:.1f} USDT
+💳 إجمالي الإيداعات: {user['total_deposits']:.1f} USDT
+📅 تاريخ التسجيل: {user['registration_date'].split()[0]}"""
+
+    # الأزرار
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("🎮 الألعاب", callback_data="games"),
+        InlineKeyboardButton("💎 خدمات VIP", callback_data="vip_services"),
+        InlineKeyboardButton("🎯 رابط الاحالات", callback_data="referral"),
+        InlineKeyboardButton("💰 السحب", callback_data="withdraw")
+    )
+    keyboard.add(
+        InlineKeyboardButton("🆘 الدعم الفني", url="https://t.me/Trust_wallet_Support_4")
+    )
+    
+    # تعديل الرسالة الحالية
+    bot.edit_message_text(
+        profile_text, 
+        call.message.chat.id, 
+        call.message.message_id, 
+        reply_markup=keyboard
+    )
 
 # معالجة الإحالات من رابط الدعوة
 @bot.message_handler(func=lambda message: message.text and message.text.startswith('/start ref'))
@@ -781,11 +830,210 @@ def stats(message):
         bot.reply_to(message, f"❌ خطأ: {e}")
 
 # =============================================
+# 🆕 نظام النسخ الاحتياطي والاستعادة
+# =============================================
+
+# 📥 أمر تحميل النسخة الاحتياطية
+@bot.message_handler(commands=['backup'])
+def backup_data(message):
+    if message.from_user.id not in ADMIN_IDS:
+        bot.reply_to(message, "❌ ليس لديك صلاحية!")
+        return
+    
+    try:
+        # إنشاء نسخة احتياطية مع timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_file = f"backup_users_data_{timestamp}.json"
+        
+        # نسخ الملف
+        shutil.copy2(DATA_FILE, backup_file)
+        
+        # إرسال الملف للمسؤول
+        with open(backup_file, 'rb') as f:
+            bot.send_document(
+                message.chat.id, 
+                f,
+                caption=f"📦 النسخة الاحتياطية - {timestamp}\n"
+                       f"💾 الملف: {DATA_FILE}\n"
+                       f"⏰ الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+        
+        bot.reply_to(message, f"✅ تم إنشاء نسخة احتياطية: {backup_file}")
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ خطأ في النسخ الاحتياطي: {e}")
+
+# 📤 أمر استعادة النسخة الاحتياطية
+@bot.message_handler(commands=['restore'])
+def restore_data(message):
+    if message.from_user.id not in ADMIN_IDS:
+        bot.reply_to(message, "❌ ليس لديك صلاحية!")
+        return
+    
+    try:
+        # طلب الملف للاستعادة
+        msg = bot.reply_to(message, "📤 الرجاء إرسال ملف النسخة الاحتياطية (JSON):")
+        bot.register_next_step_handler(msg, process_restore_file)
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ خطأ في الاستعادة: {e}")
+
+def process_restore_file(message):
+    try:
+        if not message.document:
+            bot.reply_to(message, "❌ لم يتم إرسال ملف!")
+            return
+        
+        # تحميل الملف
+        file_info = bot.get_file(message.document.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        
+        # حفظ الملف المؤقت
+        temp_file = "temp_restore.json"
+        with open(temp_file, 'wb') as f:
+            f.write(downloaded_file)
+        
+        # التحقق من صحة الملف
+        with open(temp_file, 'r', encoding='utf-8') as f:
+            test_data = json.load(f)
+        
+        if not isinstance(test_data, dict):
+            bot.reply_to(message, "❌ الملف غير صالح!")
+            return
+        
+        # إنشاء نسخة احتياطية من الملف الحالي قبل الاستعادة
+        backup_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        shutil.copy2(DATA_FILE, f"pre_restore_backup_{backup_timestamp}.json")
+        
+        # استبدال الملف الرئيسي
+        shutil.copy2(temp_file, DATA_FILE)
+        
+        # تنظيف الملف المؤقت
+        os.remove(temp_file)
+        
+        bot.reply_to(
+            message, 
+            f"✅ تم استعادة البيانات بنجاح!\n"
+            f"📊 عدد المستخدمين: {len(test_data)}\n"
+            f"💾 تم إنشاء نسخة احتياطية قبل الاستعادة: pre_restore_backup_{backup_timestamp}.json"
+        )
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ خطأ في استعادة الملف: {e}")
+
+# 📝 أمر نسخ البيانات يدوياً
+@bot.message_handler(commands=['copydata'])
+def copy_user_data(message):
+    if message.from_user.id not in ADMIN_IDS:
+        bot.reply_to(message, "❌ ليس لديك صلاحية!")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.reply_to(message, "❌ استخدم: /copydata [from_user_id] [to_user_id]")
+            return
+        
+        from_user_id = int(parts[1])
+        to_user_id = int(parts[2])
+        
+        users_data = load_users()
+        
+        if str(from_user_id) not in users_data:
+            bot.reply_to(message, f"❌ المستخدم المصدر {from_user_id} غير موجود!")
+            return
+        
+        # نسخ البيانات
+        from_user_data = users_data[str(from_user_id)]
+        to_user_data = get_user(to_user_id)
+        
+        # نسخ الحقول المهمة
+        fields_to_copy = [
+            'balance', 'referrals_count', 'referrals_new', 'total_earned',
+            'total_deposits', 'vip_level', 'games_played_today', 'total_games_played'
+        ]
+        
+        copied_fields = []
+        for field in fields_to_copy:
+            if field in from_user_data:
+                old_value = to_user_data.get(field, 0)
+                to_user_data[field] = from_user_data[field]
+                copied_fields.append(f"{field}: {old_value} → {from_user_data[field]}")
+        
+        save_user(to_user_data)
+        
+        bot.reply_to(
+            message,
+            f"✅ تم نسخ البيانات من {from_user_id} إلى {to_user_id}\n\n"
+            f"📊 الحقول المنسوخة:\n" + "\n".join(copied_fields)
+        )
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ خطأ في نسخ البيانات: {e}")
+
+# 📍 أمر عرض موقع الملف
+@bot.message_handler(commands=['fileinfo'])
+def file_info(message):
+    if message.from_user.id not in ADMIN_IDS:
+        bot.reply_to(message, "❌ ليس لديك صلاحية!")
+        return
+    
+    try:
+        file_path = os.path.abspath(DATA_FILE)
+        file_size = os.path.getsize(DATA_FILE) if os.path.exists(DATA_FILE) else 0
+        file_exists = os.path.exists(DATA_FILE)
+        
+        users_data = load_users()
+        
+        info_text = f"""
+📁 معلومات ملف البيانات:
+
+📍 المسار: `{file_path}`
+📦 الحجم: {file_size} بايت
+✅ موجود: {'نعم' if file_exists else 'لا'}
+👥 عدد المستخدمين: {len(users_data)}
+💾 آخر تعديل: {time.ctime(os.path.getmtime(DATA_FILE)) if file_exists else 'غير متوفر'}
+
+💡 لتحميل نسخة احتياطية: /backup
+💡 لاستعادة بيانات: /restore"""
+        
+        bot.reply_to(message, info_text, parse_mode='Markdown')
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ خطأ: {e}")
+
+# =============================================
+# 💓 نظام النبضات (Heartbeat)
+# =============================================
+
+def heartbeat_loop():
+    """إرسال نبضات دورية لإبقاء البوت شغال"""
+    while True:
+        try:
+            # روابط مجانية لإرسال النبضات
+            urls = [
+                "https://api.telegram.org",
+                "https://www.google.com",
+                "https://www.cloudflare.com"
+            ]
+            
+            for url in urls:
+                try:
+                    requests.get(url, timeout=5)
+                    print(f"💓 نبضة مرسلة إلى {url} - {datetime.now().strftime('%H:%M:%S')}")
+                except:
+                    pass
+            
+            # الانتظار 5 دقائق بين كل نبضة
+            time.sleep(300)
+            
+        except Exception as e:
+            print(f"❌ خطأ في النبضات: {e}")
+            time.sleep(60)
+
+# =============================================
 # ⚡ كود تشغيل ويب سيرفر عشان Render
 # =============================================
-from flask import Flask
-import threading
-
 def run_web_server():
     """تشغيل سيرفر ويب بسيط عشان Render"""
     web_app = Flask(__name__)
@@ -808,6 +1056,8 @@ print("💎 VIP Services: Bronze, Silver, Gold")
 print("💰 Withdrawal: 150 USDT min + 10 days required")
 print("🎁 Referral Bonus: 1 USDT per referral")
 print("🌐 Web server: Active for Render")
+print("💓 Heartbeat system: Active (5 min intervals)")
+print("📦 Backup system: Active - /backup, /restore, /copydata, /fileinfo")
 print("✅ Bot is running and ready!")
 print("🛠️ All admin commands loaded!")
 
@@ -816,6 +1066,11 @@ if __name__ == "__main__":
     web_thread = threading.Thread(target=run_web_server)
     web_thread.daemon = True
     web_thread.start()
+    
+    # تشغيل نظام النبضات في thread منفصل
+    heartbeat_thread = threading.Thread(target=heartbeat_loop)
+    heartbeat_thread.daemon = True
+    heartbeat_thread.start()
     
     try:
         bot.infinity_polling()
