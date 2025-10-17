@@ -10,6 +10,24 @@ import shutil
 import time
 import requests
 from google.oauth2.service_account import Credentials
+from flask import Flask
+
+# 📡 Flask Server for Render
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "🤖 USDT Telegram Bot is Running!"
+
+@app.route('/health')
+def health_check():
+    return "✅ OK", 200
+
+def run_flask():
+    """تشغيل خادم ويب بسيط لإرضاء Render"""
+    port = int(os.environ.get('PORT', 10000))
+    print(f"🌐 Starting Flask server on port {port}")
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 # 🔧 الإعدادات من environment variables
 BOT_TOKEN = os.getenv('BOT_TOKEN', '7973697789:AAFXfYXTgYaTAF1j7IGhp2kiv-kxrN1uImk')
@@ -1135,13 +1153,24 @@ def heartbeat_loop():
 def run_bot():
     """تشغيل البوت مع معالجة الأخطاء"""
     print("🔄 Starting bot...")
+    
+    # 🆕 الإضافة الجديدة: تشغيل Flask server أولاً
+    print("🌐 Starting Flask server for Render...")
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    
+    # انتظر ثانيتين عشان Flask يبدأ
+    time.sleep(2)
+    
     print("💾 Database: JSON File + Google Sheets Sync")
     print("🎮 Games: Slot & Dice (3 attempts + referrals)")
     print("💎 VIP Services: Bronze, Silver, Gold")
     print("💰 Withdrawal: 150 USDT min + 10 days required")
     print("🎁 Referral Bonus: 1 USDT per referral")
-    print("💓 Heartbeat system: Active (10 min intervals)")
+    print("💓 Heartbeat system: Active (5 min intervals)")
     print("📊 Google Sheets Integration: Ready")
+    print("🌐 Flask Server: Running on port 10000")
     print("✅ Bot is running and ready!")
     print("🛠️ All admin commands loaded!")
     
