@@ -30,6 +30,8 @@ def init_google_sheets():
             creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
             client = gspread.authorize(creds)
             return client.open("Bot-Users").sheet1
+        else:
+            print("⚠️ GOOGLE_SHEETS_CREDENTIALS not found in environment variables")
     except Exception as e:
         print(f"❌ خطأ في تهيئة Google Sheets: {e}")
     return None
@@ -219,8 +221,15 @@ def get_remaining_attempts(user):
     return max(0, remaining), total_attempts, extra_attempts
 
 def get_mining_reward_time():
-    """وقت مكافأة التعدين (مبسط)"""
-    return "12س 00د ⏳"
+    """وقت مكافأة التعدين (حقيقي وليس عشوائي)"""
+    now = datetime.now()
+    next_reset = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    time_left = next_reset - now
+    
+    hours = int(time_left.total_seconds() // 3600)
+    minutes = int((time_left.total_seconds() % 3600) // 60)
+    
+    return f"{hours:02d}س {minutes:02d}د ⏳"
 
 def can_withdraw(user):
     """التحقق من إمكانية السحب"""
@@ -234,16 +243,20 @@ def can_withdraw(user):
 def start_command(message):
     try:
         user = get_user(message.from_user.id)
+        # ✅ الإصلاح: حفظ اسم المستخدم الحقيقي من تيليجرام
         user['first_name'] = message.from_user.first_name or "مستخدم"
         user['username'] = message.from_user.username or ""
         update_user_activity(message.from_user.id)
         
+        # حساب المحاولات المتبقية
         remaining_attempts, total_attempts, extra_attempts = get_remaining_attempts(user)
         vip_name = get_vip_level_name(user['vip_level'])
         mining_time = get_mining_reward_time()
         
-        user_name = user['first_name'] if user['first_name'] else "مستخدم"
+        # ✅ الإصلاح: استخدام الاسم الحقيقي من تيليجرام مباشرة
+        user_name = message.from_user.first_name or "مستخدم"
         
+        # النص الرئيسي
         profile_text = f"""📊 الملف الشخصي
 
 👤 المستخدم: {user_name}
@@ -261,6 +274,7 @@ def start_command(message):
 💳 إجمالي الإيداعات: {user['total_deposits']:.1f} USDT
 📅 تاريخ التسجيل: {user['registration_date'].split()[0]}"""
 
+        # الأزرار
         keyboard = InlineKeyboardMarkup(row_width=2)
         keyboard.add(
             InlineKeyboardButton("🎮 الألعاب", callback_data="games"),
@@ -408,23 +422,34 @@ def play_dice(call):
     except Exception as e:
         print(f"❌ خطأ في play_dice: {e}")
 
-# 💎 خدمات VIP
+# 💎 خدمات VIP - مع الأسعار المحددة
 @bot.callback_query_handler(func=lambda call: call.data == "vip_services")
 def show_vip_services(call):
     try:
         vip_text = """💎 العضويات VIP المميزة:
 
-• 🟢 برونز VIP: +10% تعدين، مكافأة يومية 0.5 USDT
-• 🔵 سيلفر VIP: +25% تعدين، مكافأة يومية 1.0 USDT  
-• 🟡 جولد VIP: +50% تعدين، مكافأة يومية 2.0 USDT
+🟢 برونز VIP - 5 USDT:
+• +10% تعدين
+• مكافأة يومية 0.5 USDT
+• +2 محاولات ألعاب يومية
+
+🔵 سيلفر VIP - 10 USDT:
+• +25% تعدين  
+• مكافأة يومية 1.0 USDT
+• +5 محاولات ألعاب يومية
+
+🟡 جولد VIP - 20 USDT:
+• +50% تعدين
+• مكافأة يومية 2.0 USDT
+• +10 محاولات ألعاب يومية
 
 اختر العضوية المناسبة:"""
         
         keyboard = InlineKeyboardMarkup(row_width=1)
         keyboard.add(
-            InlineKeyboardButton("🟢 شراء برونز VIP", callback_data="buy_bronze"),
-            InlineKeyboardButton("🔵 شراء سيلفر VIP", callback_data="buy_silver"),
-            InlineKeyboardButton("🟡 شراء جولد VIP", callback_data="buy_gold"),
+            InlineKeyboardButton("🟢 شراء برونز VIP - 5 USDT", callback_data="buy_bronze"),
+            InlineKeyboardButton("🔵 شراء سيلفر VIP - 10 USDT", callback_data="buy_silver"),
+            InlineKeyboardButton("🟡 شراء جولد VIP - 20 USDT", callback_data="buy_gold"),
             InlineKeyboardButton("🔙 رجوع", callback_data="back_to_profile")
         )
         
@@ -445,7 +470,14 @@ def handle_vip_purchase(call):
             'gold': '🟡 جولد VIP'
         }
         
+        vip_prices = {
+            'bronze': 5.0,
+            'silver': 10.0,
+            'gold': 20.0
+        }
+        
         vip_name = vip_names.get(vip_type, 'VIP')
+        vip_price = vip_prices.get(vip_type, 0)
         
         request_text = f"""🛒 طلب شراء جديد:
 
@@ -453,6 +485,7 @@ def handle_vip_purchase(call):
 🆔 الآيدي: {call.from_user.id}
 📞 للتواصل: [اضغط هنا](tg://user?id={call.from_user.id})
 💎 النوع: {vip_name}
+💰 السعر: {vip_price} USDT
 💰 الرصيد الحالي: {user['balance']:.1f} USDT
 📅 الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
@@ -466,7 +499,7 @@ def handle_vip_purchase(call):
         
         bot.answer_callback_query(
             call.id, 
-            f"✅ تم إرسال طلب شراء {vip_name} للإدارة\nسيتم التواصل معك قريباً", 
+            f"✅ تم إرسال طلب شراء {vip_name} بقيمة {vip_price} USDT للإدارة\nسيتم التواصل معك قريباً", 
             show_alert=True
         )
     except Exception as e:
@@ -635,20 +668,22 @@ def handle_referral(call):
     except Exception as e:
         print(f"❌ خطأ في handle_referral: {e}")
 
-# 🔙 رجوع للبروفايل
+# 🔙 رجوع للبروفايل - الإصلاح الكامل
 @bot.callback_query_handler(func=lambda call: call.data == "back_to_profile")
 def back_to_profile(call):
     try:
         user = get_user(call.from_user.id)
         update_user_activity(call.from_user.id)
         
-        user = get_user(call.from_user.id)
+        # ✅ الإصلاح: استخدام الاسم الحقيقي من تيليجرام مباشرة
+        user_name = call.from_user.first_name or "مستخدم"
+        
+        # حساب المحاولات المتبقية
         remaining_attempts, total_attempts, extra_attempts = get_remaining_attempts(user)
         vip_name = get_vip_level_name(user['vip_level'])
         mining_time = get_mining_reward_time()
         
-        user_name = user['first_name'] if user['first_name'] else "مستخدم"
-        
+        # النص الرئيسي المعدل
         profile_text = f"""📊 الملف الشخصي
 
 👤 المستخدم: {user_name}
@@ -666,6 +701,7 @@ def back_to_profile(call):
 💳 إجمالي الإيداعات: {user['total_deposits']:.1f} USDT
 📅 تاريخ التسجيل: {user['registration_date'].split()[0]}"""
 
+        # الأزرار
         keyboard = InlineKeyboardMarkup(row_width=2)
         keyboard.add(
             InlineKeyboardButton("🎮 الألعاب", callback_data="games"),
@@ -677,6 +713,7 @@ def back_to_profile(call):
             InlineKeyboardButton("🆘 الدعم الفني", url="https://t.me/Trust_wallet_Support_4")
         )
         
+        # تعديل الرسالة الحالية
         bot.edit_message_text(
             profile_text, 
             call.message.chat.id, 
@@ -1085,14 +1122,14 @@ def heartbeat_loop():
                 except:
                     print(f"⚠️ فشل النبضة إلى {url}")
             
-            time.sleep(600)
+            time.sleep(300)
             
         except Exception as e:
             print(f"❌ خطأ في النبضات: {e}")
             time.sleep(60)
 
 # =============================================
-# 🚀 تشغيل البوت المحسن
+# 🚀 تشغيل البوت المحسن - حل مشكلة 409
 # =============================================
 
 def run_bot():
@@ -1108,6 +1145,14 @@ def run_bot():
     print("✅ Bot is running and ready!")
     print("🛠️ All admin commands loaded!")
     
+    # تنظيف أي اتصالات سابقة
+    try:
+        bot.delete_webhook()
+        print("✅ Webhook deleted successfully")
+        time.sleep(2)
+    except Exception as e:
+        print(f"ℹ️ No webhook to delete or error: {e}")
+    
     # تشغيل نظام النبضات
     try:
         heartbeat_thread = threading.Thread(target=heartbeat_loop)
@@ -1117,11 +1162,11 @@ def run_bot():
     except Exception as e:
         print(f"❌ Failed to start heartbeat: {e}")
     
-    # تشغيل البوت مع إعادة المحاولة
+    # تشغيل البوت مع إعادة المحاولة - حل مشكلة 409
     while True:
         try:
             print("🤖 Starting bot polling...")
-            bot.infinity_polling(timeout=60, long_polling_timeout=60)
+            bot.infinity_polling(timeout=60, long_polling_timeout=60, restart_on_change=True)
         except Exception as e:
             print(f"❌ Bot crashed: {e}")
             print("🔄 Restarting bot in 10 seconds...")
