@@ -1145,20 +1145,47 @@ def heartbeat_loop():
 # =============================================
 
 def run_bot():
-    """تشغيل البوت فقط - بدون تعقيد"""
+    """تشغيل البوت مع Flask بسيط"""
     print("🔄 Starting USDT Telegram Bot...")
     print(f"✅ BOT_TOKEN: {BOT_TOKEN[:10]}...")
+    
+    # تحقق من التوكن
+    if not BOT_TOKEN or BOT_TOKEN == '7973697789:AAFXfYXTgYaTAF1j7IGhp2kiv-kxrN1uImk':
+        print("❌ ERROR: BOT_TOKEN not set properly!")
+        return
+    
     print("🎯 Bot Features: Games, VIP, Withdraw, Referrals")
+    
+    # تشغيل Flask في thread منفصل
+    def run_flask():
+        try:
+            port = int(os.environ.get('PORT', 10000))
+            print(f"🌐 Starting web server on port {port}")
+            app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+        except Exception as e:
+            print(f"⚠️ Web server error: {e}")
+    
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    
+    # انتظر ثم ابدأ البوت
+    time.sleep(3)
     print("🤖 Starting Telegram Bot Polling...")
     
-    # تشغيل البوت مباشرة
     try:
+        # جرب البوت
+        bot_info = bot.get_me()
+        print(f"✅ Bot is ready: @{bot_info.username}")
+        
+        # ابدأ الاستماع للرسائل
         bot.infinity_polling(timeout=60, long_polling_timeout=60, restart_on_change=True)
+        
     except Exception as e:
         print(f"❌ Bot error: {e}")
-        print("🔄 Restarting in 10 seconds...")
-        time.sleep(10)
-        run_bot()  # إعادة التشغيل التلقائي
+        print("🔄 Restarting in 30 seconds...")
+        time.sleep(30)
+        run_bot()
 
 if __name__ == "__main__":
     run_bot()
