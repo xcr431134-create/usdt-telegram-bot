@@ -1144,16 +1144,6 @@ def heartbeat_loop():
 # 🚀 تشغيل البوت المحسن - حل مشكلة 409
 # =============================================
 
-def start_bot_polling():
-    """تشغيل البوت في thread منفصل"""
-    print("🤖 Starting Telegram Bot Polling...")
-    try:
-        bot.infinity_polling(timeout=60, long_polling_timeout=60, restart_on_change=True)
-    except Exception as e:
-        print(f"❌ Bot polling error: {e}")
-        print("🔄 Restarting bot in 30 seconds...")
-        time.sleep(30)
-        start_bot_polling()  # إعادة التشغيل التلقائي
 def run_bot():
     """تشغيل البوت فقط - بدون تعقيد"""
     print("🔄 Starting USDT Telegram Bot...")
