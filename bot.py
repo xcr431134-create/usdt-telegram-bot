@@ -1,44 +1,46 @@
 import os
 import telebot
+import json
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from datetime import datetime
-from supabase import create_client
 
-BOT_TOKEN = os.environ.get('BOT_TOKEN')
-SUPABASE_URL = "https://fkuwskcffyslzbjmegsq.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZrdXdza2NmZnlzbHpiam1lZ3NxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA1Mjg5NTIsImV4cCI6MjA3NjEwNDk1Mn0.R-gExYyhHxuMK4qE-49yQWC9tIKbmjXkjX_UxHE6YHU"
-
-if not BOT_TOKEN:
-    print("❌ ERROR: BOT_TOKEN not found!")
-    exit(1)
-
-print(f"✅ Token loaded: {BOT_TOKEN[:10]}...")
-
+BOT_TOKEN = "7973697789:AAFXfYXTgYaTAF1j7IGhp2kiv-kxrN1uImk"
 bot = telebot.TeleBot(BOT_TOKEN)
 ADMIN_IDS = [8400225549]
 
-# 🔧 قاعدة بيانات Supabase
-try:
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-    print("✅ Connected to Supabase Database!")
-except Exception as e:
-    print(f"❌ Supabase connection failed: {e}")
-    supabase = None
+# ملف تخزين البيانات
+DATA_FILE = "users_data.json"
+
+def load_users():
+    """تحميل البيانات من الملف"""
+    try:
+        with open(DATA_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        print(f"❌ خطأ في تحميل البيانات: {e}")
+        return {}
+
+def save_users(users_data):
+    """حفظ البيانات في الملف"""
+    try:
+        with open(DATA_FILE, 'w', encoding='utf-8') as f:
+            json.dump(users_data, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        print(f"❌ خطأ في حفظ البيانات: {e}")
+        return False
 
 def get_user(user_id):
+    """جلب بيانات المستخدم"""
+    users_data = load_users()
     user_id_str = str(user_id)
     
-    # جرب Supabase أولاً
-    if supabase:
-        try:
-            response = supabase.table('users').select('*').eq('user_id', user_id_str).execute()
-            if response.data and len(response.data) > 0:
-                print(f"✅ Loaded user {user_id} from Supabase")
-                return response.data[0]
-        except Exception as e:
-            print(f"❌ Error fetching from Supabase: {e}")
+    if user_id_str in users_data:
+        return users_data[user_id_str]
     
-    # البيانات الافتراضية إذا ما في اتصال أو ما في مستخدم
+    # إنشاء مستخدم جديد
     user_data = {
         'user_id': user_id_str,
         'username': "",
@@ -54,40 +56,15 @@ def get_user(user_id):
         'last_activity': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }
     
-    # حفظ في Supabase إذا متاح
-    if supabase:
-        try:
-            supabase.table('users').upsert(user_data).execute()
-            print(f"✅ Created new user {user_id} in Supabase")
-        except Exception as e:
-            print(f"❌ Error creating user in Supabase: {e}")
-    
+    users_data[user_id_str] = user_data
+    save_users(users_data)
     return user_data
 
 def save_user(user_data):
-    if supabase:
-        try:
-            # استخدام upsert بدل update لحل مشكلة duplicate key
-            response = supabase.table('users').upsert({
-                'user_id': user_data['user_id'],
-                'username': user_data['username'],
-                'first_name': user_data['first_name'],
-                'balance': user_data['balance'],
-                'referrals_count': user_data['referrals_count'],
-                'games_played_today': user_data['games_played_today'],
-                'total_games_played': user_data['total_games_played'],
-                'total_earned': user_data['total_earned'],
-                'total_deposits': user_data['total_deposits'],
-                'vip_level': user_data['vip_level'],
-                'last_activity': user_data['last_activity']
-            }).execute()
-            
-            print(f"💾 Saved user {user_data['user_id']} to Supabase")
-            return True
-        except Exception as e:
-            print(f"❌ Error saving to Supabase: {e}")
-            return False
-    return False
+    """حفظ بيانات مستخدم"""
+    users_data = load_users()
+    users_data[user_data['user_id']] = user_data
+    return save_users(users_data)
 
 def update_user_activity(user_id):
     user = get_user(user_id)
@@ -108,7 +85,7 @@ def start_command(message):
     
     bot.send_message(
         message.chat.id,
-        f"أهلاً {message.from_user.first_name}! 👋\n💰 رصيدك: {user['balance']:.1f} USDT\n💾 البيانات: دائمة\nاختر من الأزرار:",
+        f"أهلاً {message.from_user.first_name}! 👋\n💰 رصيدك: {user['balance']:.1f} USDT\n💾 البيانات: محفوظة في الملف\nاختر من الأزرار:",
         reply_markup=keyboard
     )
 
@@ -124,7 +101,7 @@ def handle_buttons(call):
     if call.data == "referral":
         referral_link = f"https://t.me/{bot.get_me().username}?start=ref{call.from_user.id}"
         bot.edit_message_text(
-            f"🎯 رابطك الخاص:\n`{referral_link}`\n\n💾 بياناتك محفوظة للأبد!",
+            f"🎯 رابطك الخاص:\n`{referral_link}`\n\n💾 بياناتك محفوظة في الملف!",
             call.message.chat.id,
             call.message.message_id
         )
@@ -153,7 +130,7 @@ def quick_add(message):
         
         save_user(user)
         
-        bot.reply_to(message, f"✅ تم إضافة {amount} USDT للمستخدم {user_id}\n💰 الرصيد الجديد: {user['balance']:.1f} USDT\n💾 تم الحفظ في قاعدة البيانات")
+        bot.reply_to(message, f"✅ تم إضافة {amount} USDT للمستخدم {user_id}\n💰 الرصيد الجديد: {user['balance']:.1f} USDT\n💾 تم الحفظ في الملف")
         
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ: {e}")
@@ -181,7 +158,7 @@ def set_balance(message):
         
         save_user(user)
         
-        bot.reply_to(message, f"✅ تم تعيين رصيد المستخدم {user_id}\n💰 السابق: {old_balance:.1f}\n💰 الجديد: {user['balance']:.1f} USDT\n💾 تم الحفظ في قاعدة البيانات")
+        bot.reply_to(message, f"✅ تم تعيين رصيد المستخدم {user_id}\n💰 السابق: {old_balance:.1f}\n💰 الجديد: {user['balance']:.1f} USDT\n💾 تم الحفظ في الملف")
         
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ: {e}")
@@ -210,7 +187,7 @@ def set_referrals(message):
         
         save_user(user)
         
-        bot.reply_to(message, f"✅ تم تعيين إحالات المستخدم {user_id}\n👥 السابق: {old_count}\n👥 الجديد: {user['referrals_count']}\n💾 تم الحفظ في قاعدة البيانات")
+        bot.reply_to(message, f"✅ تم تعيين إحالات المستخدم {user_id}\n👥 السابق: {old_count}\n👥 الجديد: {user['referrals_count']}\n💾 تم الحفظ في الملف")
         
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ: {e}")
@@ -239,7 +216,7 @@ def set_attempts(message):
         
         save_user(user)
         
-        bot.reply_to(message, f"✅ تم تعيين محاولات المستخدم {user_id}\n🎯 السابق: {old_attempts}/3\n🎯 الجديد: {user['games_played_today']}/3\n💾 تم الحفظ في قاعدة البيانات")
+        bot.reply_to(message, f"✅ تم تعيين محاولات المستخدم {user_id}\n🎯 السابق: {old_attempts}/3\n🎯 الجديد: {user['games_played_today']}/3\n💾 تم الحفظ في الملف")
         
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ: {e}")
@@ -265,7 +242,7 @@ def reset_attempts(message):
         
         save_user(user)
         
-        bot.reply_to(message, f"✅ تم إعادة تعيين محاولات المستخدم {user_id}\n🎯 الآن لديه 3/3 محاولات\n💾 تم الحفظ في قاعدة البيانات")
+        bot.reply_to(message, f"✅ تم إعادة تعيين محاولات المستخدم {user_id}\n🎯 الآن لديه 3/3 محاولات\n💾 تم الحفظ في الملف")
         
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ: {e}")
@@ -305,7 +282,7 @@ def user_info(message):
 🏆 الأرباح: {user['total_earned']:.1f} USDT
 📅 مسجل منذ: {user['registration_date']}
 🕒 آخر نشاط: {last_active}
-💾 التخزين: قاعدة بيانات دائمة"""
+💾 التخزين: ملف JSON (دائم)"""
         
         bot.reply_to(message, info_text)
         
@@ -321,11 +298,8 @@ def list_users(message):
     update_user_activity(message.from_user.id)
     
     try:
-        if supabase:
-            response = supabase.table('users').select('*').execute()
-            users = response.data
-        else:
-            users = []
+        users_data = load_users()
+        users = list(users_data.values())
         
         if not users:
             bot.reply_to(message, "❌ لا يوجد مستخدمين في قاعدة البيانات")
@@ -338,7 +312,7 @@ def list_users(message):
         if len(users) > 15:
             users_list += f"\n📎 وإجمالي {len(users)} مستخدم"
         
-        users_list += f"\n💾 قاعدة بيانات: Supabase"
+        users_list += f"\n💾 قاعدة بيانات: ملف JSON"
         
         bot.reply_to(message, users_list)
         
@@ -354,11 +328,8 @@ def stats(message):
     update_user_activity(message.from_user.id)
     
     try:
-        if supabase:
-            response = supabase.table('users').select('*').execute()
-            users = response.data
-        else:
-            users = []
+        users_data = load_users()
+        users = list(users_data.values())
         
         total_balance = sum(user['balance'] for user in users)
         total_referrals = sum(user['referrals_count'] for user in users)
@@ -374,7 +345,7 @@ def stats(message):
 👥 إجمالي الإحالات: {total_referrals}
 💳 إجمالي الإيداعات: {total_deposits:.1f} USDT
 🎯 مستخدمين بلعبوا اليوم: {sum(1 for user in users if user['games_played_today'] > 0)}
-💾 قاعدة بيانات: Supabase (دائمة)"""
+💾 التخزين: ملف JSON (دائم)"""
         
         bot.reply_to(message, stats_text)
         
@@ -412,13 +383,13 @@ def admin_help(message):
 /start - القائمة الرئيسية
 /myid - عرض الآيدي
 
-💾 التخزين: قاعدة بيانات دائمة (Supabase)
+💾 التخزين: ملف JSON (دائم)
 """
     
     bot.reply_to(message, help_text)
 
 print("🔄 Starting bot...")
-print("💾 Database: Supabase (Permanent Storage)")
+print("💾 Database: JSON File (Permanent Storage)")
 print("✅ Bot is running and ready!")
 print("🛠️ All admin commands loaded!")
 
