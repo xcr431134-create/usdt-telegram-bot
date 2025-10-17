@@ -1,8 +1,9 @@
 import os
 import telebot
 import json
+import random
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-from datetime import datetime
+from datetime import datetime, timedelta
 
 BOT_TOKEN = "7973697789:AAFXfYXTgYaTAF1j7IGhp2kiv-kxrN1uImk"
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -38,7 +39,17 @@ def get_user(user_id):
     user_id_str = str(user_id)
     
     if user_id_str in users_data:
-        return users_data[user_id_str]
+        # تحديث المحاولات إذا انتهى اليوم
+        user_data = users_data[user_id_str]
+        last_reset = user_data.get('last_reset_date', '2000-01-01')
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        if last_reset != today:
+            user_data['games_played_today'] = 0
+            user_data['last_reset_date'] = today
+            save_users(users_data)
+        
+        return user_data
     
     # إنشاء مستخدم جديد
     user_data = {
@@ -47,13 +58,15 @@ def get_user(user_id):
         'first_name': "",
         'balance': 0.0,
         'referrals_count': 0,
+        'referrals_new': 0,
         'games_played_today': 0,
         'total_games_played': 0,
         'total_earned': 0.0,
         'total_deposits': 0.0,
         'vip_level': 0,
         'registration_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'last_activity': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        'last_activity': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'last_reset_date': datetime.now().strftime('%Y-%m-%d')
     }
     
     users_data[user_id_str] = user_data
@@ -71,40 +84,237 @@ def update_user_activity(user_id):
     user['last_activity'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     save_user(user)
 
-# 🎯 الأوامر للجميع
-@bot.message_handler(commands=['start'])
+def get_vip_level_name(level):
+    """تحويل مستوى VIP إلى اسم"""
+    vip_names = {
+        0: "🟢 مبتدئ",
+        1: "🔵 فضي", 
+        2: "🟡 ذهبي",
+        3: "🟣 بلاتيني",
+        4: "🔴 الماسي"
+    }
+    return vip_names.get(level, "🟢 مبتدئ")
+
+def get_remaining_attempts(user):
+    """حساب المحاولات المتبقية"""
+    base_attempts = 3
+    extra_attempts = user.get('referrals_new', 0)
+    used_attempts = user.get('games_played_today', 0)
+    total_attempts = base_attempts + extra_attempts
+    remaining = total_attempts - used_attempts
+    return max(0, remaining), total_attempts, extra_attempts
+
+def get_mining_reward_time():
+    """وقت مكافأة التعدين (عشوائي)"""
+    hours = random.randint(12, 20)
+    minutes = random.randint(0, 59)
+    return f"{hours}س {minutes}د ⏳"
+
+# 🎯 الواجهة الرئيسية الجديدة
+@bot.message_handler(commands=['start', 'profile'])
 def start_command(message):
     user = get_user(message.from_user.id)
     user['first_name'] = message.from_user.first_name or ""
     user['username'] = message.from_user.username or ""
     update_user_activity(message.from_user.id)
     
-    keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton("🎯 رابط الاحالات", callback_data="referral"))
-    keyboard.add(InlineKeyboardButton("🆘 الدعم الفني", url="https://t.me/Trust_wallet_Support_4"))
+    # حساب المحاولات المتبقية
+    remaining_attempts, total_attempts, extra_attempts = get_remaining_attempts(user)
+    vip_name = get_vip_level_name(user['vip_level'])
+    mining_time = get_mining_reward_time()
     
-    bot.send_message(
-        message.chat.id,
-        f"أهلاً {message.from_user.first_name}! 👋\n💰 رصيدك: {user['balance']:.1f} USDT\n💾 البيانات: محفوظة في الملف\nاختر من الأزرار:",
-        reply_markup=keyboard
+    # النص الرئيسي
+    profile_text = f"""📊 الملف الشخصي
+
+👤 المستخدم: {user['first_name'] or 'User'} {user['user_id']}
+🆔 المعرف: {user['user_id']}
+💰 الرصيد: {user['balance']:.1f} USDT
+👥 الإحالات: {user['referrals_count']} مستخدم
+📈 الإحالات الجديدة: {user.get('referrals_new', 0)}/{user['referrals_count']}
+🏆 مستوى VIP: {vip_name}
+🎯 المحاولات المتبقية: {remaining_attempts} ({total_attempts} أساسية + {extra_attempts} إضافية)
+
+⏰ مكافأة التعدين: {mining_time}
+
+💎 إجمالي الأرباح: {user['total_earned']:.1f} USDT
+💳 إجمالي الإيداعات: {user['total_deposits']:.1f} USDT
+📅 تاريخ التسجيل: {user['registration_date'].split()[0]}"""
+
+    # الأزرار
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("🎮 الألعاب (3 محاولات)", callback_data="games"),
+        InlineKeyboardButton("🎯 رابط الاحالات", callback_data="referral"),
+        InlineKeyboardButton("🆘 الدعم الفني", url="https://t.me/Trust_wallet_Support_4"),
+        InlineKeyboardButton("🔄 تحديث", callback_data="refresh_profile")
     )
+    
+    bot.send_message(message.chat.id, profile_text, reply_markup=keyboard)
+
+# 🎮 قائمة الألعاب
+@bot.callback_query_handler(func=lambda call: call.data == "games")
+def show_games(call):
+    user = get_user(call.from_user.id)
+    remaining_attempts, total_attempts, extra_attempts = get_remaining_attempts(user)
+    
+    games_text = f"""🎮 قائمة الألعاب
+
+المحاولات المتبقية: {remaining_attempts}/{total_attempts}
+🎰 الربح لكل محاولة: 2.5 USDT
+
+اختر اللعبة:"""
+    
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("🎰 سلوت", callback_data="game_slot"),
+        InlineKeyboardButton("🎲 نرد", callback_data="game_dice")
+    )
+    keyboard.add(InlineKeyboardButton("🔙 رجوع", callback_data="back_to_profile"))
+    
+    bot.edit_message_text(games_text, call.message.chat.id, call.message.message_id, reply_markup=keyboard)
+
+# 🎰 لعبة السلوت
+@bot.callback_query_handler(func=lambda call: call.data == "game_slot")
+def play_slot(call):
+    user = get_user(call.from_user.id)
+    remaining_attempts, total_attempts, _ = get_remaining_attempts(user)
+    
+    if remaining_attempts <= 0:
+        bot.answer_callback_query(call.id, "❌ لا توجد محاولات متبقية اليوم!", show_alert=True)
+        return
+    
+    # خفض المحاولات
+    user['games_played_today'] += 1
+    user['total_games_played'] += 1
+    
+    # محاكاة لعبة السلوت
+    symbols = ["🍒", "🍋", "🍊", "🍇", "🔔", "💎"]
+    result = [random.choice(symbols) for _ in range(3)]
+    
+    # حساب الربح
+    if result[0] == result[1] == result[2]:
+        win_amount = 2.5
+        win_text = "🎉 ربح كبير!"
+    elif result[0] == result[1] or result[1] == result[2]:
+        win_amount = 1.25
+        win_text = "👍 ربح جيد!"
+    else:
+        win_amount = 0
+        win_text = "😞 حاول مرة أخرى"
+    
+    # تحديث الرصيد
+    user['balance'] += win_amount
+    if win_amount > 0:
+        user['total_earned'] += win_amount
+    
+    save_user(user)
+    
+    # تحديث المحاولات المتبقية
+    remaining_attempts, total_attempts, _ = get_remaining_attempts(user)
+    
+    game_result = f"""🎰 لعبة السلوت
+
+{' | '.join(result)}
+
+{win_text}
+💰 الربح: {win_amount:.2f} USDT
+
+🎯 المحاولات المتبقية: {remaining_attempts}/{total_attempts}"""
+    
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("🎰 العب مرة أخرى", callback_data="game_slot"))
+    keyboard.add(InlineKeyboardButton("🔙 رجوع للألعاب", callback_data="games"))
+    
+    bot.edit_message_text(game_result, call.message.chat.id, call.message.message_id, reply_markup=keyboard)
+
+# 🎲 لعبة النرد
+@bot.callback_query_handler(func=lambda call: call.data == "game_dice")
+def play_dice(call):
+    user = get_user(call.from_user.id)
+    remaining_attempts, total_attempts, _ = get_remaining_attempts(user)
+    
+    if remaining_attempts <= 0:
+        bot.answer_callback_query(call.id, "❌ لا توجد محاولات متبقية اليوم!", show_alert=True)
+        return
+    
+    # خفض المحاولات
+    user['games_played_today'] += 1
+    user['total_games_played'] += 1
+    
+    # محاكاة لعبة النرد
+    dice1 = random.randint(1, 6)
+    dice2 = random.randint(1, 6)
+    total = dice1 + dice2
+    
+    # حساب الربح
+    if total == 7:
+        win_amount = 2.5
+        win_text = "🎉 ربح كبير! (رقم الحظ)"
+    elif total >= 10:
+        win_amount = 1.5
+        win_text = "👍 ربح جيد!"
+    elif total <= 4:
+        win_amount = 1.0
+        win_text = "👌 ربح صغير"
+    else:
+        win_amount = 0
+        win_text = "😞 حاول مرة أخرى"
+    
+    # تحديث الرصيد
+    user['balance'] += win_amount
+    if win_amount > 0:
+        user['total_earned'] += win_amount
+    
+    save_user(user)
+    
+    # تحديث المحاولات المتبقية
+    remaining_attempts, total_attempts, _ = get_remaining_attempts(user)
+    
+    game_result = f"""🎲 لعبة النرد
+
+🎲 النرد: {dice1} + {dice2} = {total}
+
+{win_text}
+💰 الربح: {win_amount:.2f} USDT
+
+🎯 المحاولات المتبقية: {remaining_attempts}/{total_attempts}"""
+    
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("🎲 العب مرة أخرى", callback_data="game_dice"))
+    keyboard.add(InlineKeyboardButton("🔙 رجوع للألعاب", callback_data="games"))
+    
+    bot.edit_message_text(game_result, call.message.chat.id, call.message.message_id, reply_markup=keyboard)
+
+# 🔄 تحديث الملف الشخصي
+@bot.callback_query_handler(func=lambda call: call.data == "refresh_profile")
+def refresh_profile(call):
+    start_command(call.message)
+    bot.answer_callback_query(call.id, "✅ تم التحديث")
+
+# 🔙 رجوع للبروفايل
+@bot.callback_query_handler(func=lambda call: call.data == "back_to_profile")
+def back_to_profile(call):
+    start_command(call.message)
+
+# 🎯 رابط الاحالات (نفس الكود السابق)
+@bot.callback_query_handler(func=lambda call: call.data == "referral")
+def handle_referral(call):
+    update_user_activity(call.from_user.id)
+    referral_link = f"https://t.me/{bot.get_me().username}?start=ref{call.from_user.id}"
+    bot.edit_message_text(
+        f"🎯 رابطك الخاص:\n`{referral_link}`\n\n💾 بياناتك محفوظة في الملف!",
+        call.message.chat.id,
+        call.message.message_id
+    )
+
+# =============================================
+# ⚡ كل الأوامر الإدارية الأصلية (بدون تغيير)
+# =============================================
 
 @bot.message_handler(commands=['myid'])
 def myid(message):
     update_user_activity(message.from_user.id)
     bot.reply_to(message, f"🆔 معرفك: `{message.from_user.id}`", parse_mode='Markdown')
-
-@bot.callback_query_handler(func=lambda call: True)
-def handle_buttons(call):
-    update_user_activity(call.from_user.id)
-    
-    if call.data == "referral":
-        referral_link = f"https://t.me/{bot.get_me().username}?start=ref{call.from_user.id}"
-        bot.edit_message_text(
-            f"🎯 رابطك الخاص:\n`{referral_link}`\n\n💾 بياناتك محفوظة في الملف!",
-            call.message.chat.id,
-            call.message.message_id
-        )
 
 # 💰 إدارة الرصيد (للمشرفين)
 @bot.message_handler(commands=['quickadd'])
@@ -265,7 +475,7 @@ def user_info(message):
         user_id = int(parts[1])
         user = get_user(user_id)
         
-        remaining_attempts = 3 - user['games_played_today']
+        remaining_attempts, total_attempts, extra_attempts = get_remaining_attempts(user)
         last_active = user.get('last_activity', 'غير معروف')
         
         info_text = f"""
@@ -275,14 +485,14 @@ def user_info(message):
 👤 الاسم: {user['first_name']}
 💰 الرصيد: {user['balance']:.1f} USDT
 👥 الإحالات: {user['referrals_count']}
-🎯 المحاولات: {user['games_played_today']}/3 (متبقي: {remaining_attempts})
-💎 VIP: {user['vip_level']}
+🎯 المحاولات: {user['games_played_today']}/{total_attempts} (متبقي: {remaining_attempts})
+💎 VIP: {get_vip_level_name(user['vip_level'])}
 🎮 الألعاب: {user['total_games_played']}
 💳 الإيداعات: {user['total_deposits']:.1f} USDT
 🏆 الأرباح: {user['total_earned']:.1f} USDT
 📅 مسجل منذ: {user['registration_date']}
 🕒 آخر نشاط: {last_active}
-💾 التخزين: ملف JSON (دائم)"""
+💾 التخزين: ملف JSON"""
         
         bot.reply_to(message, info_text)
         
@@ -345,7 +555,7 @@ def stats(message):
 👥 إجمالي الإحالات: {total_referrals}
 💳 إجمالي الإيداعات: {total_deposits:.1f} USDT
 🎯 مستخدمين بلعبوا اليوم: {sum(1 for user in users if user['games_played_today'] > 0)}
-💾 التخزين: ملف JSON (دائم)"""
+💾 التخزين: ملف JSON"""
         
         bot.reply_to(message, stats_text)
         
@@ -380,22 +590,20 @@ def admin_help(message):
 /stats - إحصائيات البوت
 
 🔰 أوامر عامة:
-/start - القائمة الرئيسية
+/start - الملف الشخصي
 /myid - عرض الآيدي
 
-💾 التخزين: ملف JSON (دائم)
+💾 التخزين: ملف JSON
 """
     
     bot.reply_to(message, help_text)
 
 print("🔄 Starting bot...")
 print("💾 Database: JSON File (Permanent Storage)")
+print("🎮 Games: Slot & Dice (3 attempts + referrals)")
 print("✅ Bot is running and ready!")
 print("🛠️ All admin commands loaded!")
 
-# =============================================
-# ⚡ الكود المضبوط للتشغيل في Render
-# =============================================
 if __name__ == "__main__":
     try:
         bot.infinity_polling()
