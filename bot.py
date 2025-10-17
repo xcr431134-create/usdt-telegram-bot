@@ -11,6 +11,10 @@ import time
 import requests
 from google.oauth2.service_account import Credentials
 from flask import Flask
+import logging
+
+# ✅ تمكين السجلات
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 # 📡 Flask Server for Render
 app = Flask(__name__)
@@ -24,17 +28,27 @@ def health_check():
     return "✅ OK", 200
 
 # 🔧 الإعدادات من environment variables
-BOT_TOKEN = os.getenv('BOT_TOKEN')
+print("🔍 جاري تحميل الإعدادات...")
+BOT_TOKEN = os.environ.get('BOT_TOKEN')
+
+if not BOT_TOKEN:
+    print("❌ خطأ: BOT_TOKEN غير موجود في environment variables!")
+    print("💡 الرجاء إضافة BOT_TOKEN في إعدادات Render")
+    exit(1)
+
+print(f"✅ تم تحميل BOT_TOKEN: {BOT_TOKEN[:10]}...")
+
 ADMIN_IDS = [int(os.getenv('ADMIN_ID', '8400225549'))]
 DATA_FILE = "users_data.json"
 
+print("🤖 جاري إنشاء البوت...")
 bot = telebot.TeleBot(BOT_TOKEN)
+print("✅ تم إنشاء البوت بنجاح!")
 
 # 📊 Google Sheets Integration
 def init_google_sheets():
     """تهيئة الاتصال بـ Google Sheets"""
     try:
-        # استخدام environment variable بدلاً من ملف
         creds_json = os.getenv('GOOGLE_SHEETS_CREDENTIALS')
         if creds_json:
             creds_dict = json.loads(creds_json)
@@ -43,9 +57,9 @@ def init_google_sheets():
             client = gspread.authorize(creds)
             return client.open("Bot-Users").sheet1
         else:
-            print("⚠️ GOOGLE_SHEETS_CREDENTIALS not found in environment variables")
+            print("⚠️ GOOGLE_SHEETS_CREDENTIALS not found")
     except Exception as e:
-        print(f"❌ خطأ في تهيئة Google Sheets: {e}")
+        print(f"❌ خطأ في Google Sheets: {e}")
     return None
 
 def sync_user_to_sheets(user_data):
@@ -55,11 +69,9 @@ def sync_user_to_sheets(user_data):
         if not sheet:
             return False
             
-        # البحث عن المستخدم في الورقة
         users = sheet.get_all_records()
         user_id = user_data['user_id']
         
-        # تحضير البيانات
         row_data = [
             user_data['user_id'],
             user_data.get('first_name', ''),
@@ -77,9 +89,8 @@ def sync_user_to_sheets(user_data):
             user_data.get('registration_days', 0)
         ]
         
-        # البحث عن الصف الموجود أو إضافة جديد
         found = False
-        for i, user in enumerate(users, start=2):  # start=2 لأن الصف الأول للعناوين
+        for i, user in enumerate(users, start=2):
             if str(user['user_id']) == str(user_id):
                 sheet.update(f'A{i}:N{i}', [row_data])
                 found = True
@@ -88,10 +99,10 @@ def sync_user_to_sheets(user_data):
         if not found:
             sheet.append_row(row_data)
             
-        print(f"✅ تم مزامنة user_id {user_id} مع Google Sheets")
+        print(f"✅ تم مزامنة user_id {user_id}")
         return True
     except Exception as e:
-        print(f"❌ خطأ في المزامنة مع Google Sheets: {e}")
+        print(f"❌ خطأ في المزامنة: {e}")
         return False
 
 def load_users():
@@ -99,10 +110,10 @@ def load_users():
     try:
         with open(DATA_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            print(f"📂 تم تحميل {len(data)} مستخدم من الذاكرة")
+            print(f"📂 تم تحميل {len(data)} مستخدم")
             return data
     except FileNotFoundError:
-        print("📂 لا يوجد بيانات سابقة، سيتم إنشاء ملف جديد")
+        print("📂 لا يوجد بيانات سابقة")
         return {}
     except Exception as e:
         print(f"❌ خطأ في تحميل البيانات: {e}")
@@ -113,9 +124,8 @@ def save_users(users_data):
     try:
         with open(DATA_FILE, 'w', encoding='utf-8') as f:
             json.dump(users_data, f, ensure_ascii=False, indent=2)
-        print(f"💾 تم حفظ {len(users_data)} مستخدم في الذاكرة")
+        print(f"💾 تم حفظ {len(users_data)} مستخدم")
         
-        # مزامنة جميع المستخدمين مع Google Sheets
         for user_data in users_data.values():
             sync_user_to_sheets(user_data)
             
@@ -132,7 +142,6 @@ def get_user(user_id):
     if user_id_str in users_data:
         user_data = users_data[user_id_str]
         
-        # تحديث المحاولات إذا انتهى اليوم
         last_reset = user_data.get('last_reset_date', '2000-01-01')
         today = datetime.now().strftime('%Y-%m-%d')
         
@@ -140,18 +149,12 @@ def get_user(user_id):
             user_data['games_played_today'] = 0
             user_data['last_reset_date'] = today
             
-            # منح المكافأة اليومية
             daily_bonus = 0.75
             user_data['balance'] += daily_bonus
             user_data['total_earned'] += daily_bonus
             print(f"🎁 منح مكافأة يومية {daily_bonus} لـ {user_id}")
             
-            # منح مكافآت VIP
-            vip_bonus = {
-                1: 0.5,  # برونز
-                2: 1.0,  # سيلفر
-                3: 2.0   # جولد
-            }
+            vip_bonus = {1: 0.5, 2: 1.0, 3: 2.0}
             if user_data['vip_level'] in vip_bonus:
                 bonus = vip_bonus[user_data['vip_level']]
                 user_data['balance'] += bonus
@@ -162,12 +165,11 @@ def get_user(user_id):
         
         return user_data
     
-    # إنشاء مستخدم جديد
     user_data = {
         'user_id': user_id_str,
         'username': "",
         'first_name': "",
-        'balance': 0.75,  # مكافأة ترحيبية
+        'balance': 0.75,
         'referrals_count': 0,
         'referrals_new': 0,
         'games_played_today': 0,
@@ -194,9 +196,8 @@ def save_user(user_data):
     user_id = user_data['user_id']
     users_data[user_id] = user_data
     
-    print(f"💾 حفظ بيانات user_id: {user_id}, الرصيد: {user_data['balance']}")
+    print(f"💾 حفظ بيانات user_id: {user_id}")
     
-    # مزامنة مع Google Sheets
     sync_user_to_sheets(user_data)
     
     return save_users(users_data)
@@ -205,7 +206,6 @@ def update_user_activity(user_id):
     user = get_user(user_id)
     user['last_activity'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
-    # تحديث أيام التسجيل
     registration_date = datetime.strptime(user['registration_date'].split()[0], '%Y-%m-%d')
     current_date = datetime.now()
     days_registered = (current_date - registration_date).days
@@ -233,7 +233,7 @@ def get_remaining_attempts(user):
     return max(0, remaining), total_attempts, extra_attempts
 
 def get_mining_reward_time():
-    """وقت مكافأة التعدين (حقيقي وليس عشوائي)"""
+    """وقت مكافأة التعدين"""
     now = datetime.now()
     next_reset = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
     time_left = next_reset - now
@@ -255,20 +255,16 @@ def can_withdraw(user):
 def start_command(message):
     try:
         user = get_user(message.from_user.id)
-        # ✅ الإصلاح: حفظ اسم المستخدم الحقيقي من تيليجرام
         user['first_name'] = message.from_user.first_name or "مستخدم"
         user['username'] = message.from_user.username or ""
         update_user_activity(message.from_user.id)
         
-        # حساب المحاولات المتبقية
         remaining_attempts, total_attempts, extra_attempts = get_remaining_attempts(user)
         vip_name = get_vip_level_name(user['vip_level'])
         mining_time = get_mining_reward_time()
         
-        # ✅ الإصلاح: استخدام الاسم الحقيقي من تيليجرام مباشرة
         user_name = message.from_user.first_name or "مستخدم"
         
-        # النص الرئيسي
         profile_text = f"""📊 الملف الشخصي
 
 👤 المستخدم: {user_name}
@@ -286,7 +282,6 @@ def start_command(message):
 💳 إجمالي الإيداعات: {user['total_deposits']:.1f} USDT
 📅 تاريخ التسجيل: {user['registration_date'].split()[0]}"""
 
-        # الأزرار
         keyboard = InlineKeyboardMarkup(row_width=2)
         keyboard.add(
             InlineKeyboardButton("🎮 الألعاب", callback_data="games"),
@@ -434,7 +429,7 @@ def play_dice(call):
     except Exception as e:
         print(f"❌ خطأ في play_dice: {e}")
 
-# 💎 خدمات VIP - مع الأسعار المحددة
+# 💎 خدمات VIP
 @bot.callback_query_handler(func=lambda call: call.data == "vip_services")
 def show_vip_services(call):
     try:
@@ -511,7 +506,7 @@ def handle_vip_purchase(call):
         
         bot.answer_callback_query(
             call.id, 
-            f"✅ تم إرسال طلب شراء {vip_name} بقيمة {vip_price} USDT للإدارة\nسيتم التواصل معك قريباً", 
+            f"✅ تم إرسال طلب شراء {vip_name} للإدارة", 
             show_alert=True
         )
     except Exception as e:
@@ -640,7 +635,7 @@ def process_withdrawal(call):
         
         bot.answer_callback_query(
             call.id, 
-            f"✅ تم إرسال طلب سحب {amount:.1f} USDT للإدارة\nسيتم المعالجة خلال 24 ساعة", 
+            f"✅ تم إرسال طلب سحب {amount:.1f} USDT للإدارة", 
             show_alert=True
         )
     except Exception as e:
@@ -680,22 +675,19 @@ def handle_referral(call):
     except Exception as e:
         print(f"❌ خطأ في handle_referral: {e}")
 
-# 🔙 رجوع للبروفايل - الإصلاح الكامل
+# 🔙 رجوع للبروفايل
 @bot.callback_query_handler(func=lambda call: call.data == "back_to_profile")
 def back_to_profile(call):
     try:
         user = get_user(call.from_user.id)
         update_user_activity(call.from_user.id)
         
-        # ✅ الإصلاح: استخدام الاسم الحقيقي من تيليجرام مباشرة
         user_name = call.from_user.first_name or "مستخدم"
         
-        # حساب المحاولات المتبقية
         remaining_attempts, total_attempts, extra_attempts = get_remaining_attempts(user)
         vip_name = get_vip_level_name(user['vip_level'])
         mining_time = get_mining_reward_time()
         
-        # النص الرئيسي المعدل
         profile_text = f"""📊 الملف الشخصي
 
 👤 المستخدم: {user_name}
@@ -713,7 +705,6 @@ def back_to_profile(call):
 💳 إجمالي الإيداعات: {user['total_deposits']:.1f} USDT
 📅 تاريخ التسجيل: {user['registration_date'].split()[0]}"""
 
-        # الأزرار
         keyboard = InlineKeyboardMarkup(row_width=2)
         keyboard.add(
             InlineKeyboardButton("🎮 الألعاب", callback_data="games"),
@@ -725,7 +716,6 @@ def back_to_profile(call):
             InlineKeyboardButton("🆘 الدعم الفني", url="https://t.me/Trust_wallet_Support_4")
         )
         
-        # تعديل الرسالة الحالية
         bot.edit_message_text(
             profile_text, 
             call.message.chat.id, 
@@ -976,9 +966,7 @@ def backup_data(message):
             bot.send_document(
                 message.chat.id, 
                 f,
-                caption=f"📦 النسخة الاحتياطية - {timestamp}\n"
-                       f"💾 الملف: {DATA_FILE}\n"
-                       f"⏰ الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                caption=f"📦 النسخة الاحتياطية - {timestamp}"
             )
         
         bot.reply_to(message, f"✅ تم إنشاء نسخة احتياطية: {backup_file}")
@@ -1028,60 +1016,11 @@ def process_restore_file(message):
         
         bot.reply_to(
             message, 
-            f"✅ تم استعادة البيانات بنجاح!\n"
-            f"📊 عدد المستخدمين: {len(test_data)}\n"
-            f"💾 تم إنشاء نسخة احتياطية قبل الاستعادة: pre_restore_backup_{backup_timestamp}.json"
+            f"✅ تم استعادة البيانات بنجاح!\n📊 عدد المستخدمين: {len(test_data)}"
         )
         
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ في استعادة الملف: {e}")
-
-@bot.message_handler(commands=['copydata'])
-def copy_user_data(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "❌ ليس لديك صلاحية!")
-        return
-    
-    try:
-        parts = message.text.split()
-        if len(parts) != 3:
-            bot.reply_to(message, "❌ استخدم: /copydata [from_user_id] [to_user_id]")
-            return
-        
-        from_user_id = int(parts[1])
-        to_user_id = int(parts[2])
-        
-        users_data = load_users()
-        
-        if str(from_user_id) not in users_data:
-            bot.reply_to(message, f"❌ المستخدم المصدر {from_user_id} غير موجود!")
-            return
-        
-        from_user_data = users_data[str(from_user_id)]
-        to_user_data = get_user(to_user_id)
-        
-        fields_to_copy = [
-            'balance', 'referrals_count', 'referrals_new', 'total_earned',
-            'total_deposits', 'vip_level', 'games_played_today', 'total_games_played'
-        ]
-        
-        copied_fields = []
-        for field in fields_to_copy:
-            if field in from_user_data:
-                old_value = to_user_data.get(field, 0)
-                to_user_data[field] = from_user_data[field]
-                copied_fields.append(f"{field}: {old_value} → {from_user_data[field]}")
-        
-        save_user(to_user_data)
-        
-        bot.reply_to(
-            message,
-            f"✅ تم نسخ البيانات من {from_user_id} إلى {to_user_id}\n\n"
-            f"📊 الحقول المنسوخة:\n" + "\n".join(copied_fields)
-        )
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ في نسخ البيانات: {e}")
 
 @bot.message_handler(commands=['fileinfo'])
 def file_info(message):
@@ -1102,11 +1041,7 @@ def file_info(message):
 📍 المسار: `{file_path}`
 📦 الحجم: {file_size} بايت
 ✅ موجود: {'نعم' if file_exists else 'لا'}
-👥 عدد المستخدمين: {len(users_data)}
-💾 آخر تعديل: {time.ctime(os.path.getmtime(DATA_FILE)) if file_exists else 'غير متوفر'}
-
-💡 لتحميل نسخة احتياطية: /backup
-💡 لاستعادة بيانات: /restore"""
+👥 عدد المستخدمين: {len(users_data)}"""
         
         bot.reply_to(message, info_text, parse_mode='Markdown')
         
@@ -1114,78 +1049,53 @@ def file_info(message):
         bot.reply_to(message, f"❌ خطأ: {e}")
 
 # =============================================
-# 💓 نظام النبضات المحسن
-# =============================================
-
-def heartbeat_loop():
-    """إرسال نبضات دورية"""
-    while True:
-        try:
-            urls = [
-                "https://www.google.com",
-                "https://www.cloudflare.com"
-            ]
-            
-            for url in urls:
-                try:
-                    response = requests.get(url, timeout=10)
-                    if response.status_code == 200:
-                        print(f"💓 نبضة ناجحة إلى {url} - {datetime.now().strftime('%H:%M:%S')}")
-                except:
-                    print(f"⚠️ فشل النبضة إلى {url}")
-            
-            time.sleep(300)
-            
-        except Exception as e:
-            print(f"❌ خطأ في النبضات: {e}")
-            time.sleep(60)
-
-# =============================================
-# 🚀 تشغيل البوت المحسن - حل مشكلة 409
+# 🚀 تشغيل البوت المحسن
 # =============================================
 
 def run_bot():
-    """تشغيل البوت مع Flask بسيط"""
-    print("🔄 Starting USDT Telegram Bot...")
-    print(f"✅ BOT_TOKEN: {BOT_TOKEN[:10]}...")
-    
-    # تحقق من التوكن
-    if not BOT_TOKEN or BOT_TOKEN == '7973697789:AAFXfYXTgYaTAF1j7IGhp2kiv-kxrN1uImk':
-        print("❌ ERROR: BOT_TOKEN not set properly!")
-        return
-    
-    print("🎯 Bot Features: Games, VIP, Withdraw, Referrals")
-    
-    # تشغيل Flask في thread منفصل
-    def run_flask():
-        try:
-            port = int(os.environ.get('PORT', 10000))
-            print(f"🌐 Starting web server on port {port}")
-            app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-        except Exception as e:
-            print(f"⚠️ Web server error: {e}")
-    
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.daemon = True
-    flask_thread.start()
-    
-    # انتظر ثم ابدأ البوت
-    time.sleep(3)
-    print("🤖 Starting Telegram Bot Polling...")
-    
+    """تشغيل البوت مع معالجة الأخطاء"""
     try:
-        # جرب البوت
-        bot_info = bot.get_me()
-        print(f"✅ Bot is ready: @{bot_info.username}")
+        print("=" * 50)
+        print("🚀 STARTING USDT BOT")
+        print("=" * 50)
         
-        # ابدأ الاستماع للرسائل
-        bot.infinity_polling(timeout=60, long_polling_timeout=60, restart_on_change=True)
+        if not BOT_TOKEN:
+            print("❌ CRITICAL: BOT_TOKEN is not set!")
+            print("💡 Please add BOT_TOKEN to environment variables")
+            return
+        
+        print(f"✅ BOT_TOKEN loaded: {BOT_TOKEN[:10]}...{BOT_TOKEN[-5:]}")
+        print("🤖 Starting Telegram Bot Polling...")
+        
+        # استخدم polling بسيط
+        bot.polling(
+            none_stop=True,
+            timeout=60,
+            long_polling_timeout=60
+        )
         
     except Exception as e:
-        print(f"❌ Bot error: {e}")
-        print("🔄 Restarting in 30 seconds...")
-        time.sleep(30)
+        print(f"❌ BOT CRASHED: {repr(e)}")
+        import traceback
+        traceback.print_exc()
+        print("🔄 Restarting in 10 seconds...")
+        time.sleep(10)
         run_bot()
 
+def run_flask():
+    """تشغيل Flask server"""
+    try:
+        print("🌐 Starting Flask server on port 10000...")
+        app.run(host='0.0.0.0', port=10000, debug=False)
+    except Exception as e:
+        print(f"❌ Flask error: {e}")
+
 if __name__ == "__main__":
-    run_bot()
+    print("🎯 Starting USDT Bot System...")
+    
+    # تشغيل البوت في thread منفصل
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+    
+    # تشغيل Flask في thread الرئيسي
+    run_flask()
