@@ -11,7 +11,6 @@ import time
 import requests
 from google.oauth2.service_account import Credentials
 from flask import Flask
-import socket
 
 # 📡 Flask Server for Render
 app = Flask(__name__)
@@ -23,14 +22,6 @@ def home():
 @app.route('/health')
 def health_check():
     return "✅ OK", 200
-
-def run_flask_app(port):
-    """تشغيل تطبيق Flask مع معالجة الأخطاء"""
-    try:
-        print(f"🌐 Starting Flask server on port {port}")
-        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False, threaded=True)
-    except Exception as e:
-        print(f"❌ Flask server error: {e}")
 
 # 🔧 الإعدادات من environment variables
 BOT_TOKEN = os.getenv('BOT_TOKEN', '7973697789:AAFXfYXTgYaTAF1j7IGhp2kiv-kxrN1uImk')
@@ -1153,59 +1144,34 @@ def heartbeat_loop():
 # 🚀 تشغيل البوت المحسن - حل مشكلة 409
 # =============================================
 
+def start_bot_polling():
+    """تشغيل البوت في thread منفصل"""
+    print("🤖 Starting Telegram Bot Polling...")
+    try:
+        bot.infinity_polling(timeout=60, long_polling_timeout=60, restart_on_change=True)
+    except Exception as e:
+        print(f"❌ Bot polling error: {e}")
+        print("🔄 Restarting bot in 30 seconds...")
+        time.sleep(30)
+        start_bot_polling()  # إعادة التشغيل التلقائي
+
 def run_bot():
     """تشغيل البوت مع معالجة الأخطاء"""
-    print("🔄 Starting bot...")
+    print("🔄 Starting bot system...")
+    print(f"✅ BOT_TOKEN: {BOT_TOKEN[:10]}...")
     
-    # ✅ الإصلاح: تشغيل Flask مرة واحدة فقط
+    # ✅ ابدأ بالبوت أولاً في thread منفصل
+    print("🤖 Starting Telegram Bot in background thread...")
+    bot_thread = threading.Thread(target=start_bot_polling)
+    bot_thread.daemon = True
+    bot_thread.start()
+    
+    # ✅ ثم شغل Flask في main thread
     port = int(os.environ.get('PORT', 10000))
+    print(f"🌐 Starting Flask server on port {port}...")
     
-    # تشغيل Flask في thread منفصل
-    print("🌐 Starting Flask server for Render...")
-    flask_thread = threading.Thread(target=run_flask_app, args=(port,))
-    flask_thread.daemon = True
-    flask_thread.start()
-    
-    # انتظر قليلاً لبدء Flask
-    time.sleep(3)
-    
-    print("💾 Database: JSON File + Google Sheets Sync")
-    print("🎮 Games: Slot & Dice (3 attempts + referrals)")
-    print("💎 VIP Services: Bronze, Silver, Gold")
-    print("💰 Withdrawal: 150 USDT min + 10 days required")
-    print("🎁 Referral Bonus: 1 USDT per referral")
-    print("💓 Heartbeat system: Active (5 min intervals)")
-    print("📊 Google Sheets Integration: Ready")
-    print("🌐 Flask Server: Running on port", port)
-    print("✅ Bot is running and ready!")
-    print("🛠️ All admin commands loaded!")
-    
-    # تنظيف أي اتصالات سابقة
-    try:
-        bot.delete_webhook()
-        print("✅ Webhook deleted successfully")
-        time.sleep(2)
-    except Exception as e:
-        print(f"ℹ️ No webhook to delete or error: {e}")
-    
-    # تشغيل نظام النبضات
-    try:
-        heartbeat_thread = threading.Thread(target=heartbeat_loop)
-        heartbeat_thread.daemon = True
-        heartbeat_thread.start()
-        print("💓 Heartbeat system started")
-    except Exception as e:
-        print(f"❌ Failed to start heartbeat: {e}")
-    
-    # تشغيل البوت مع إعادة المحاولة - حل مشكلة 409
-    while True:
-        try:
-            print("🤖 Starting bot polling...")
-            bot.infinity_polling(timeout=60, long_polling_timeout=60, restart_on_change=True)
-        except Exception as e:
-            print(f"❌ Bot crashed: {e}")
-            print("🔄 Restarting bot in 10 seconds...")
-            time.sleep(10)
+    # هذا اللي رح يخلي السيرفر شغال باستمرار
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 if __name__ == "__main__":
     run_bot()
