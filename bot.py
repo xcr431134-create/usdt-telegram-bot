@@ -11,6 +11,7 @@ import time
 import requests
 from google.oauth2.service_account import Credentials
 from flask import Flask
+import socket
 
 # 📡 Flask Server for Render
 app = Flask(__name__)
@@ -23,11 +24,13 @@ def home():
 def health_check():
     return "✅ OK", 200
 
-def run_flask():
-    """تشغيل خادم ويب بسيط لإرضاء Render"""
-    port = int(os.environ.get('PORT', 10000))
-    print(f"🌐 Starting Flask server on port {port}")
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+def run_flask_app(port):
+    """تشغيل تطبيق Flask مع معالجة الأخطاء"""
+    try:
+        print(f"🌐 Starting Flask server on port {port}")
+        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False, threaded=True)
+    except Exception as e:
+        print(f"❌ Flask server error: {e}")
 
 # 🔧 الإعدادات من environment variables
 BOT_TOKEN = os.getenv('BOT_TOKEN', '7973697789:AAFXfYXTgYaTAF1j7IGhp2kiv-kxrN1uImk')
@@ -1154,14 +1157,17 @@ def run_bot():
     """تشغيل البوت مع معالجة الأخطاء"""
     print("🔄 Starting bot...")
     
-    # 🆕 الإضافة الجديدة: تشغيل Flask server أولاً
+    # ✅ الإصلاح: تشغيل Flask مرة واحدة فقط
+    port = int(os.environ.get('PORT', 10000))
+    
+    # تشغيل Flask في thread منفصل
     print("🌐 Starting Flask server for Render...")
-    flask_thread = threading.Thread(target=run_flask)
+    flask_thread = threading.Thread(target=run_flask_app, args=(port,))
     flask_thread.daemon = True
     flask_thread.start()
     
-    # انتظر ثانيتين عشان Flask يبدأ
-    time.sleep(2)
+    # انتظر قليلاً لبدء Flask
+    time.sleep(3)
     
     print("💾 Database: JSON File + Google Sheets Sync")
     print("🎮 Games: Slot & Dice (3 attempts + referrals)")
@@ -1170,7 +1176,7 @@ def run_bot():
     print("🎁 Referral Bonus: 1 USDT per referral")
     print("💓 Heartbeat system: Active (5 min intervals)")
     print("📊 Google Sheets Integration: Ready")
-    print("🌐 Flask Server: Running on port 10000")
+    print("🌐 Flask Server: Running on port", port)
     print("✅ Bot is running and ready!")
     print("🛠️ All admin commands loaded!")
     
