@@ -47,13 +47,7 @@ if not BOT_TOKEN:
     print("💡 الرجاء إضافة BOT_TOKEN في إعدادات Railway")
     exit(1)
 
-if not DATABASE_URL:
-    print("❌ خطأ: DATABASE_URL غير موجود في environment variables!")
-    print("💡 Railway يقوم بإضافة DATABASE_URL تلقائياً عند إنشاء قاعدة البيانات")
-    exit(1)
-
 print(f"✅ تم تحميل BOT_TOKEN: {BOT_TOKEN[:10]}...")
-print(f"✅ تم تحميل DATABASE_URL: {DATABASE_URL[:30]}...")
 
 ADMIN_IDS = [int(os.getenv('ADMIN_ID', '8400225549'))]
 
@@ -68,19 +62,15 @@ print("✅ تم إنشاء البوت بنجاح!")
 def get_db_connection():
     """إنشاء اتصال بقاعدة البيانات"""
     try:
-        # جرب استخدام DATABASE_URL أولاً
-        if DATABASE_URL:
-            conn = psycopg2.connect(DATABASE_URL, sslmode='require')
-        else:
-            # إذا ما اشتغل، جرب المتغيرات المنفردة
-            conn = psycopg2.connect(
-                host=os.environ.get('PGHOST'),
-                port=os.environ.get('PGPORT', '5432'),
-                database=os.environ.get('PGDATABASE'),
-                user=os.environ.get('PGUSER'),
-                password=os.environ.get('PGPASSWORD'),
-                sslmode='require'
-            )
+        # استخدام المتغيرات المنفردة مباشرة
+        conn = psycopg2.connect(
+            host=os.environ.get('PGHOST'),
+            port=os.environ.get('PGPORT', '5432'),
+            database=os.environ.get('PGDATABASE'),
+            user=os.environ.get('PGUSER'),
+            password=os.environ.get('PGPASSWORD'),
+            sslmode='require'
+        )
         logger.info("✅ تم الاتصال بقاعدة البيانات بنجاح")
         return conn
     except Exception as e:
