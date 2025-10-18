@@ -319,8 +319,45 @@ def can_withdraw(user):
     
     return has_10_days and has_150_balance and has_address and has_15_refs
 
+def get_user_profile(user_id, first_name="", username=""):
+    """إنشاء نص الملف الشخصي"""
+    user = get_user(user_id)
+    if not user:
+        return "❌ المستخدم غير موجود"
+    
+    # تحديث النشاط
+    update_user(
+        user_id,
+        first_name=first_name,
+        username=username or "",
+        last_activity=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    )
+    
+    remaining_attempts, total_attempts, extra_attempts = get_remaining_attempts(user)
+    vip_info = VIP_LEVELS[user['vip_level']]
+    mining_time = get_mining_time_left(user_id)
+    days_registered = get_days_since_registration(user_id)
+    
+    profile = f"📊 **الملف الشخصي**\n\n"
+    profile += f"👤 المستخدم: {user['first_name'] or 'غير معروف'}\n"
+    profile += f"🆔 المعرف: {user['user_id']}\n"
+    profile += f"💰 الرصيد: **{user['balance']:.2f} USDT**\n"
+    profile += f"👥 الإحالات: **{user['referral_count']} مستخدم**\n"
+    profile += f"📈 الإحالات الجديدة: **{user['new_referrals']}/15**\n"
+    profile += f"🏆 مستوى VIP: {vip_info['name']}\n"
+    profile += f"🎯 المحاولات المتبقية: **{remaining_attempts}** ({total_attempts} أساسية + {extra_attempts} إضافية)\n"
+    profile += f"📅 أيام التسجيل: **{days_registered} يوم**\n\n"
+    
+    profile += f"⏰ مكافأة التعدين: {mining_time}\n\n"
+    
+    profile += f"💎 إجمالي الأرباح: **{user['total_earnings']:.2f} USDT**\n"
+    profile += f"💳 إجمالي الإيداعات: **{user['total_deposits']:.2f} USDT**\n"
+    profile += f"📅 تاريخ التسجيل: {user['registration_date'].split()[0]}"
+    
+    return profile
+
 # ======================
-# 🎯 الواجهة الرئيسية مع الأزرار
+# 🎯 الواجهة الرئيسية بدون أزرار كيبورد
 # ======================
 
 @bot.message_handler(commands=['start', 'profile', 'الملف'])
@@ -329,38 +366,13 @@ def handle_start(message):
     print(f"📩 استلام /start من {user_info}")
     
     try:
-        user = get_user(message.from_user.id)
-        user['first_name'] = message.from_user.first_name or "مستخدم"
-        user['username'] = message.from_user.username or ""
-        update_user(
+        profile_text = get_user_profile(
             message.from_user.id,
-            first_name=user['first_name'],
-            username=user['username'],
-            last_activity=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            message.from_user.first_name,
+            message.from_user.username or ""
         )
         
-        remaining_attempts, total_attempts, extra_attempts = get_remaining_attempts(user)
-        vip_info = VIP_LEVELS[user['vip_level']]
-        mining_time = get_mining_time_left(message.from_user.id)
-        days_registered = get_days_since_registration(message.from_user.id)
-        
-        profile = f"📊 **الملف الشخصي**\n\n"
-        profile += f"👤 المستخدم: {user['first_name']}\n"
-        profile += f"🆔 المعرف: {user['user_id']}\n"
-        profile += f"💰 الرصيد: **{user['balance']:.2f} USDT**\n"
-        profile += f"👥 الإحالات: **{user['referral_count']} مستخدم**\n"
-        profile += f"📈 الإحالات الجديدة: **{user['new_referrals']}/15**\n"
-        profile += f"🏆 مستوى VIP: {vip_info['name']}\n"
-        profile += f"🎯 المحاولات المتبقية: **{remaining_attempts}** ({total_attempts} أساسية + {extra_attempts} إضافية)\n"
-        profile += f"📅 أيام التسجيل: **{days_registered} يوم**\n\n"
-        
-        profile += f"⏰ مكافأة التعدين: {mining_time}\n\n"
-        
-        profile += f"💎 إجمالي الأرباح: **{user['total_earnings']:.2f} USDT**\n"
-        profile += f"💳 إجمالي الإيداعات: **{user['total_deposits']:.2f} USDT**\n"
-        profile += f"📅 تاريخ التسجيل: {user['registration_date'].split()[0]}"
-        
-        # الأزرار الرئيسية
+        # الأزرار الرئيسية (إنلاين فقط - بدون كيبورد)
         keyboard = InlineKeyboardMarkup(row_width=2)
         keyboard.add(
             InlineKeyboardButton("🎮 الألعاب", callback_data="games"),
@@ -374,7 +386,7 @@ def handle_start(message):
         
         bot.send_message(
             message.chat.id, 
-            profile, 
+            profile_text, 
             parse_mode='Markdown',
             reply_markup=keyboard
         )
@@ -383,6 +395,14 @@ def handle_start(message):
     except Exception as e:
         print(f"❌ فشل في معالجة /start: {e}")
         bot.send_message(message.chat.id, "❌ حدث خطأ، يرجى المحاولة لاحقاً")
+
+@bot.message_handler(commands=['myid'])
+def handle_myid(message):
+    """عرض الـ ID الخاص بالمستخدم"""
+    try:
+        bot.reply_to(message, f"🆔 معرفك: `{message.from_user.id}`", parse_mode='Markdown')
+    except Exception as e:
+        print(f"❌ خطأ في /myid: {e}")
 
 # 🎮 قائمة الألعاب
 @bot.callback_query_handler(func=lambda call: call.data == "games")
@@ -766,11 +786,36 @@ def process_withdrawal(call):
     except Exception as e:
         print(f"❌ خطأ في process_withdrawal: {e}")
 
-# 🔙 رجوع للبروفايل
+# 🔙 رجوع للبروفايل - معدل
 @bot.callback_query_handler(func=lambda call: call.data == "back_to_profile")
 def back_to_profile(call):
     try:
-        handle_start(call.message)
+        user = get_user(call.from_user.id)
+        profile_text = get_user_profile(
+            call.from_user.id,
+            call.from_user.first_name,
+            call.from_user.username or ""
+        )
+        
+        # الأزرار الرئيسية
+        keyboard = InlineKeyboardMarkup(row_width=2)
+        keyboard.add(
+            InlineKeyboardButton("🎮 الألعاب", callback_data="games"),
+            InlineKeyboardButton("💎 خدمات VIP", callback_data="vip_services"),
+            InlineKeyboardButton("🎯 رابط الاحالات", callback_data="referral"),
+            InlineKeyboardButton("💰 السحب", callback_data="withdraw")
+        )
+        keyboard.add(
+            InlineKeyboardButton("🆘 الدعم الفني", url="https://t.me/Trust_wallet_Support_4")
+        )
+        
+        bot.edit_message_text(
+            profile_text, 
+            call.message.chat.id, 
+            call.message.message_id, 
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
     except Exception as e:
         print(f"❌ خطأ في back_to_profile: {e}")
 
@@ -844,7 +889,7 @@ def handle_quickadd(message):
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ خطأ: {e}")
 
-# ... باقي الأوامر الإدارية تبقى نفسها بدون تغيير ...
+# ... باقي الأوامر الإدارية تبقى نفسها ...
 
 # ======================
 # 🔧 استمرارية البوت
