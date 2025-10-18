@@ -63,14 +63,16 @@ def get_db_connection():
     """إنشاء اتصال بقاعدة البيانات"""
     try:
         # استخدام المتغيرات المنفردة مباشرة
+        def get_db_connection():
+    try:
         conn = psycopg2.connect(
-            host=os.environ.get('PGHOST'),
-            port=os.environ.get('PGPORT', '5432'),
-            database=os.environ.get('PGDATABASE'),
-            user=os.environ.get('PGUSER'),
-            password=os.environ.get('PGPASSWORD'),
+            host="postgres.railway.internal",
+            port=5432,
+            database="railway",
+            user="postgres",
+            password="XFMpsGqruJGwBGInEfdzDazDaiRkGgyn",
             sslmode='require'
-        )
+)
         logger.info("✅ تم الاتصال بقاعدة البيانات بنجاح")
         return conn
     except Exception as e:
