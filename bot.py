@@ -40,7 +40,6 @@ def ping():
 # 🔧 الإعدادات من environment variables
 print("🔍 جاري تحميل الإعدادات...")
 BOT_TOKEN = os.environ.get('BOT_TOKEN', '7973697789:AAFXfYXTgYaTAF1j7IGhp2kiv-kxrN1uImk')
-DATABASE_URL = os.environ.get('DATABASE_URL')
 
 if not BOT_TOKEN:
     print("❌ خطأ: BOT_TOKEN غير موجود في environment variables!")
@@ -49,7 +48,7 @@ if not BOT_TOKEN:
 
 print(f"✅ تم تحميل BOT_TOKEN: {BOT_TOKEN[:10]}...")
 
-ADMIN_IDS = [int(os.getenv('ADMIN_ID', '8400225549'))]
+ADMIN_IDS = [int(x) for x in os.getenv('ADMIN_ID', '8400225549').split(',')]
 
 print("🤖 جاري إنشاء البوت...")
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -62,17 +61,20 @@ print("✅ تم إنشاء البوت بنجاح!")
 def get_db_connection():
     """إنشاء اتصال بقاعدة البيانات"""
     try:
-        # استخدام المتغيرات المنفردة مباشرة
-        def get_db_connection():
-    try:
-        conn = psycopg2.connect(
-            host="postgres.railway.internal",
-            port=5432,
-            database="railway",
-            user="postgres",
-            password="XFMpsGqruJGwBGInEfdzDazDaiRkGgyn",
-            sslmode='require'
-)
+        # استخدام DATABASE_URL إذا كان متوفراً (لـ Railway)
+        database_url = os.environ.get('DATABASE_URL')
+        if database_url:
+            conn = psycopg2.connect(database_url, sslmode='require')
+        else:
+            # استخدام المتغيرات المنفردة
+            conn = psycopg2.connect(
+                host=os.environ.get('PGHOST', 'localhost'),
+                port=os.environ.get('PGPORT', '5432'),
+                database=os.environ.get('PGDATABASE', 'railway'),
+                user=os.environ.get('PGUSER', 'postgres'),
+                password=os.environ.get('PGPASSWORD', ''),
+                sslmode='require'
+            )
         logger.info("✅ تم الاتصال بقاعدة البيانات بنجاح")
         return conn
     except Exception as e:
@@ -81,6 +83,7 @@ def get_db_connection():
 
 def init_database():
     """تهيئة الجداول في قاعدة البيانات"""
+    conn = None
     try:
         conn = get_db_connection()
         if not conn:
@@ -123,6 +126,7 @@ def init_database():
 
 def get_user(user_id):
     """جلب بيانات المستخدم من قاعدة البيانات"""
+    conn = None
     try:
         conn = get_db_connection()
         if not conn:
@@ -196,6 +200,7 @@ def create_default_user(user_id):
 
 def save_user(user_data):
     """حفظ بيانات المستخدم في قاعدة البيانات"""
+    conn = None
     try:
         conn = get_db_connection()
         if not conn:
@@ -707,7 +712,8 @@ def process_withdrawal(call):
 def handle_referral(call):
     try:
         update_user_activity(call.from_user.id)
-        referral_link = f"https://t.me/{bot.get_me().username}?start=ref{call.from_user.id}"
+        bot_username = bot.get_me().username
+        referral_link = f"https://t.me/{bot_username}?start=ref{call.from_user.id}"
         
         referral_text = f"""🎯 نظام الإحالات
 
@@ -1019,6 +1025,7 @@ def stats(message):
         bot.reply_to(message, "❌ ليس لديك صلاحية!")
         return
     
+    conn = None
     try:
         update_user_activity(message.from_user.id)
         
@@ -1125,7 +1132,6 @@ def run_bot():
                 none_stop=True,
                 timeout=90,
                 long_polling_timeout=60,
-                restart_on_change=True,
                 interval=1
             )
             
@@ -1151,8 +1157,9 @@ def run_flask():
     """تشغيل Flask server"""
     while True:
         try:
-            print("🌐 Starting Flask server on port 10000...")
-            app.run(host='0.0.0.0', port=10000, debug=False, use_reloader=False)
+            port = int(os.environ.get('PORT', 10000))
+            print(f"🌐 Starting Flask server on port {port}...")
+            app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
         except Exception as e:
             logger.error(f"❌ Flask server crashed: {e}")
             print("🔄 Restarting Flask server in 10 seconds...")
