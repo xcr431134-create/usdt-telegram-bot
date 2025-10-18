@@ -1302,3 +1302,20 @@ def run_bot():
         except Exception as e:
             print(f"❌ خطأ: {e}")
             time.sleep(5)
+
+if __name__ == "__main__":
+    print("🎯 نظام التشغيل المحسن - الإصدار النهائي")
+    print("🕒 وقت التشغيل:", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    
+    # 🔥 إضافة Flask server علشان السيرفر ما يوقف الحاوية
+    def run_flask():
+        app.run(host='0.0.0.0', port=8080, debug=False)
+    
+    # تشغيل البوت وFlask سوا
+    import threading
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    
+    # تشغيل البوت
+    run_bot()
