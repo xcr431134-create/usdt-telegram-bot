@@ -590,4 +590,303 @@ def handle_userinfo(message):
         info_msg = f"👤 معلومات المستخدم:\n\n"
         info_msg += f"🆔 المعرف: {user['user_id']}\n"
         info_msg += f"👤 الاسم: {user['first_name'] or 'غير معروف'}\n"
-        inf
+        info_msg += f"💰 الرصيد: {user['balance']:.2f} USDT\n"
+        info_msg += f"👥 الإحالات: {user['referral_count']}\n"
+        info_msg += f"🏆 مستوى VIP: {vip_info['name']}\n"
+        info_msg += f"🎯 المحاولات: {user['attempts']}\n"
+        info_msg += f"💎 إجمالي الأرباح: {user['total_earnings']:.2f} USDT\n"
+        info_msg += f"💳 إجمالي الإيداعات: {user['total_deposits']:.2f} USDT\n"
+        info_msg += f"📅 تاريخ التسجيل: {user['registration_date']}"
+        
+        bot.send_message(message.chat.id, info_msg)
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
+
+@bot.message_handler(commands=['listusers'])
+def handle_listusers(message):
+    """📊 قائمة جميع المستخدمين - للمشرفين فقط"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    try:
+        conn = get_db_connection()
+        if not conn:
+            bot.send_message(message.chat.id, "❌ خطأ في قاعدة البيانات!")
+            return
+        
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) as total FROM users")
+        total_users = cursor.fetchone()['total']
+        
+        cursor.execute("SELECT user_id, first_name, balance FROM users ORDER BY registration_date DESC LIMIT 20")
+        users = cursor.fetchall()
+        conn.close()
+        
+        if not users:
+            bot.send_message(message.chat.id, "❌ لا يوجد مستخدمين!")
+            return
+        
+        users_msg = f"👥 قائمة المستخدمين (آخر 20 من أصل {total_users}):\n\n"
+        
+        for i, user in enumerate(users, 1):
+            users_msg += f"{i}. {user['first_name'] or 'غير معروف'} (ID: {user['user_id']})\n"
+            users_msg += f"   💰 {user['balance']:.2f} USDT\n\n"
+        
+        bot.send_message(message.chat.id, users_msg)
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
+
+@bot.message_handler(commands=['stats'])
+def handle_stats(message):
+    """📊 إحصائيات البوت - للمشرفين فقط"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    try:
+        conn = get_db_connection()
+        if not conn:
+            bot.send_message(message.chat.id, "❌ خطأ في قاعدة البيانات!")
+            return
+        
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT COUNT(*) as total_users FROM users")
+        total_users = cursor.fetchone()['total_users']
+        
+        cursor.execute("SELECT SUM(balance) as total_balance FROM users")
+        total_balance = cursor.fetchone()['total_balance'] or 0
+        
+        cursor.execute("SELECT SUM(total_earnings) as total_earnings FROM users")
+        total_earnings = cursor.fetchone()['total_earnings'] or 0
+        
+        cursor.execute("SELECT SUM(total_deposits) as total_deposits FROM users")
+        total_deposits = cursor.fetchone()['total_deposits'] or 0
+        
+        cursor.execute("SELECT SUM(referral_count) as total_referrals FROM users")
+        total_referrals = cursor.fetchone()['total_referrals'] or 0
+        
+        conn.close()
+        
+        stats_msg = "📊 إحصائيات البوت:\n\n"
+        stats_msg += f"👥 إجمالي المستخدمين: {total_users}\n"
+        stats_msg += f"💰 إجمالي الرصيد: {total_balance:.2f} USDT\n"
+        stats_msg += f"💎 إجمالي الأرباح: {total_earnings:.2f} USDT\n"
+        stats_msg += f"💳 إجمالي الإيداعات: {total_deposits:.2f} USDT\n"
+        stats_msg += f"👥 إجمالي الإحالات: {total_referrals}"
+        
+        bot.send_message(message.chat.id, stats_msg)
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
+
+@bot.message_handler(commands=['setvip'])
+def handle_setvip(message):
+    """💎 تعيين مستوى VIP - للمشرفين فقط"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.send_message(message.chat.id, "📝 usage: /setvip [user_id] [level]")
+            return
+        
+        target_user_id = parts[1]
+        vip_level = int(parts[2])
+        
+        if vip_level not in VIP_LEVELS:
+            bot.send_message(message.chat.id, "❌ مستوى VIP غير صحيح! استخدم الأرقام من 0 إلى 4")
+            return
+        
+        user = get_user(target_user_id)
+        if not user:
+            bot.send_message(message.chat.id, "❌ المستخدم غير موجود!")
+            return
+        
+        vip_info = VIP_LEVELS[vip_level]
+        success = update_user(target_user_id, vip_level=vip_level)
+        
+        if success:
+            bot.send_message(message.chat.id, f"✅ تم تعيين مستوى VIP للمستخدم {target_user_id} إلى {vip_info['name']}")
+        else:
+            bot.send_message(message.chat.id, "❌ فشل في تعيين مستوى VIP!")
+            
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
+
+# ======================
+# 🎯 معالجة الرسائل العادية
+# ======================
+
+@bot.message_handler(commands=['start', 'profile', 'الملف'])
+def handle_start(message):
+    user_info = f"{message.from_user.first_name} (ID: {message.from_user.id})"
+    print(f"📩 استلام /start من {user_info}")
+    
+    try:
+        profile_text = get_user_profile(
+            message.from_user.id,
+            message.from_user.first_name,
+            message.from_user.username or ""
+        )
+        
+        # إضافة أزرار للأوامر
+        markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.row('📊 الملف الشخصي', '💰 المكافأة اليومية')
+        markup.row('👥 الإحالات', '🎯 المحاولات')
+        
+        bot.send_message(
+            message.chat.id, 
+            profile_text, 
+            parse_mode='Markdown',
+            reply_markup=markup
+        )
+        print(f"✅ تم الرد على {user_info}")
+        
+    except Exception as e:
+        print(f"❌ فشل في معالجة /start: {e}")
+        bot.send_message(message.chat.id, "❌ حدث خطأ، يرجى المحاولة لاحقاً")
+
+@bot.message_handler(commands=['mining', 'mine', 'مكافأة', 'daily'])
+def handle_mining(message):
+    try:
+        success, result_msg = claim_daily_bonus(message.from_user.id)
+        bot.send_message(message.chat.id, result_msg)
+        
+        if success:
+            # إظهار الملف الشخصي المحدث
+            profile_text = get_user_profile(
+                message.from_user.id,
+                message.from_user.first_name,
+                message.from_user.username or ""
+            )
+            bot.send_message(message.chat.id, profile_text, parse_mode='Markdown')
+            
+    except Exception as e:
+        print(f"❌ خطأ في /mining: {e}")
+        bot.send_message(message.chat.id, "❌ حدث خطأ في استلام المكافأة")
+
+@bot.message_handler(commands=['referral', 'invite', 'إحالات'])
+def handle_referral(message):
+    try:
+        bot_name = bot.get_me().username
+        referral_link = f"https://t.me/{bot_name}?start=ref{message.from_user.id}"
+        
+        referral_msg = "👥 **نظام الإحالات**\n\n"
+        referral_msg += f"🔗 رابط الإحالة الخاص بك:\n`{referral_link}`\n\n"
+        referral_msg += "🎁 **المكافآت:**\n"
+        referral_msg += "• لكل 10 إحالات: ترقية VIP + مكافآت\n"
+        referral_msg += "• إحالة جديدة: 1 USDT + محاولة إضافية\n\n"
+        referral_msg += "📊 استخدم /profile لمشاهدة إحصائياتك"
+        
+        bot.send_message(message.chat.id, referral_msg, parse_mode='Markdown')
+        
+    except Exception as e:
+        print(f"❌ خطأ في /referral: {e}")
+        bot.send_message(message.chat.id, "❌ حدث خطأ في عرض نظام الإحالات")
+
+@bot.message_handler(commands=['attempts', 'play', 'محاولات'])
+def handle_attempts(message):
+    try:
+        user = get_user(message.from_user.id)
+        if not user:
+            bot.send_message(message.chat.id, "❌ المستخدم غير موجود")
+            return
+        
+        vip_info = VIP_LEVELS[user['vip_level']]
+        
+        attempts_msg = "🎯 **نظام المحاولات**\n\n"
+        attempts_msg += f"• المحاولات المتبقية: **{user['attempts']}**\n"
+        attempts_msg += f"• المحاولات الأساسية: {vip_info['max_attempts']}\n"
+        attempts_msg += f"• المحاولات الإضافية: {max(0, user['attempts'] - vip_info['max_attempts'])}\n\n"
+        attempts_msg += f"💰 **الأرباح المحتملة:**\n"
+        attempts_msg += f"• لكل محاولة: 0.1 - 1.0 USDT\n"
+        attempts_msg += f"• الحد الأقصى اليومي: {vip_info['max_attempts']} USDT\n\n"
+        attempts_msg += "🎮 استخدم /play للبدء في اللعب!"
+        
+        bot.send_message(message.chat.id, attempts_msg, parse_mode='Markdown')
+        
+    except Exception as e:
+        print(f"❌ خطأ في /attempts: {e}")
+        bot.send_message(message.chat.id, "❌ حدث خطأ في عرض المحاولات")
+
+@bot.message_handler(func=lambda message: True)
+def handle_all_messages(message):
+    if message.text.startswith('/'):
+        return
+        
+    user_info = f"{message.from_user.first_name} (ID: {message.from_user.id})"
+    print(f"📩 رسالة عادية من {user_info}: {message.text}")
+    
+    try:
+        # تحديث النشاط
+        update_user(
+            message.from_user.id,
+            first_name=message.from_user.first_name,
+            username=message.from_user.username or "",
+            last_activity=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        )
+        
+        # معالجة النصوص الخاصة
+        if message.text == '📊 الملف الشخصي':
+            profile_text = get_user_profile(
+                message.from_user.id,
+                message.from_user.first_name,
+                message.from_user.username or ""
+            )
+            bot.send_message(message.chat.id, profile_text, parse_mode='Markdown')
+            
+        elif message.text == '💰 المكافأة اليومية':
+            success, result_msg = claim_daily_bonus(message.from_user.id)
+            bot.send_message(message.chat.id, result_msg)
+            
+        elif message.text == '👥 الإحالات':
+            handle_referral(message)
+            
+        elif message.text == '🎯 المحاولات':
+            handle_attempts(message)
+            
+        else:
+            bot.send_message(message.chat.id, "💬 استخدم الأزرار أدناه للتنقل بين الميزات!")
+            
+    except Exception as e:
+        print(f"❌ فشل في معالجة الرسالة: {e}")
+
+# ======================
+# 🔧 استمرارية البوت
+# ======================
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "🤖 البوت شغال! أرسل /start للبوت"
+
+@app.route('/health')
+def health():
+    return "✅ OK", 200
+
+def run_bot():
+    print("🚀 جاري تشغيل البوت...")
+    
+    # تهيئة قاعدة البيانات
+    if not init_database():
+        print("⚠️  تم المتابعة بدون قاعدة البيانات")
+    
+    try:
+        bot.polling(
+            none_stop=True,
+            timeout=30,
+            long_polling_timeout=20
+        )
+    except Exception as e:
+        print(f"❌ خطأ في تشغيل البوت: {e}")
+        print("🔄 إعادة المحاولة بعد 10 ثواني...")
+        time.sleep(10)
+        run_bot()
+
+if __name__ == "__main__":
+    print("🎯 بدء التشغيل...")
+    run_bot()
