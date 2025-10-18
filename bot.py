@@ -5,14 +5,22 @@ import random
 import threading
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from datetime import datetime, timedelta
-import shutil
 import time
 import requests
 from flask import Flask
 import logging
+import psycopg2
+from psycopg2.extras import RealDictCursor
+import sys
 
-# ✅ تمكين السجلات
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# ✅ تمكين السجلات المفصلة
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+
+logger = logging.getLogger(__name__)
 
 # 📡 Flask Server for Render
 app = Flask(__name__)
@@ -25,198 +33,146 @@ def home():
 def health_check():
     return "✅ OK", 200
 
+@app.route('/ping')
+def ping():
+    return "🏓 PONG", 200
+
 # 🔧 الإعدادات من environment variables
 print("🔍 جاري تحميل الإعدادات...")
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
+DATABASE_URL = os.environ.get('DATABASE_URL')
 
 if not BOT_TOKEN:
     print("❌ خطأ: BOT_TOKEN غير موجود في environment variables!")
     print("💡 الرجاء إضافة BOT_TOKEN في إعدادات Render")
     exit(1)
 
+if not DATABASE_URL:
+    print("❌ خطأ: DATABASE_URL غير موجود في environment variables!")
+    print("💡 الرجاء إضافة DATABASE_URL في إعدادات Render")
+    exit(1)
+
 print(f"✅ تم تحميل BOT_TOKEN: {BOT_TOKEN[:10]}...")
+print(f"✅ تم تحميل DATABASE_URL: {DATABASE_URL[:30]}...")
 
 ADMIN_IDS = [int(os.getenv('ADMIN_ID', '8400225549'))]
-DATA_FILE = "users_data.json"
 
 print("🤖 جاري إنشاء البوت...")
 bot = telebot.TeleBot(BOT_TOKEN)
 print("✅ تم إنشاء البوت بنجاح!")
 
 # ======================
-# 🚀 نظام النسخ الاحتياطي لـ GitHub
+# 🗄️ نظام قاعدة البيانات PostgreSQL
 # ======================
 
-def upload_to_github():
-    """رفع البيانات لـ GitHub"""
+def get_db_connection():
+    """إنشاء اتصال بقاعدة البيانات مع إعادة محاولة"""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+            return conn
+        except Exception as e:
+            logger.error(f"❌ فشل الاتصال بقاعدة البيانات (المحاولة {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2)
+            else:
+                return None
+
+def init_database():
+    """تهيئة الجداول في قاعدة البيانات"""
     try:
-        import base64
-        import requests
-        
-        users_data = load_users()
-        if not users_data:
+        conn = get_db_connection()
+        if not conn:
             return False
             
-        # تحويل البيانات لـ JSON
-        data_json = json.dumps(users_data, ensure_ascii=False, indent=2)
-        
-        # إعدادات GitHub
-        github_token = os.getenv('GITHUB_TOKEN')
-        if not github_token:
-            print("❌ GITHUB_TOKEN not found")
-            return False
+        with conn.cursor() as cur:
+            # جدول المستخدمين
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id TEXT PRIMARY KEY,
+                    username TEXT,
+                    first_name TEXT,
+                    balance REAL DEFAULT 0.75,
+                    referrals_count INTEGER DEFAULT 0,
+                    referrals_new INTEGER DEFAULT 0,
+                    games_played_today INTEGER DEFAULT 0,
+                    total_games_played INTEGER DEFAULT 0,
+                    total_earned REAL DEFAULT 0.75,
+                    total_deposits REAL DEFAULT 0.0,
+                    vip_level INTEGER DEFAULT 0,
+                    registration_date TEXT,
+                    last_activity TEXT,
+                    last_reset_date TEXT,
+                    withdrawal_address TEXT,
+                    registration_days INTEGER DEFAULT 0,
+                    last_daily_check TEXT
+                )
+            """)
             
-        # معلومات الريبو
-        repo_owner = "xcr431134"
-        repo_name = "bot-backup-data"
-        file_path = "data/users_data.json"
-        
-        url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{file_path}"
-        
-        headers = {
-            'Authorization': f'token {github_token}',
-            'Accept': 'application/vnd.github.v3+json'
-        }
-        
-        # التحقق إذا الملف موجود
-        response = requests.get(url, headers=headers)
-        sha = None
-        if response.status_code == 200:
-            sha = response.json()['sha']
-        
-        # رفع الملف
-        data = {
-            'message': f'🤖 Bot Backup - {datetime.now().strftime("%Y-%m-%d %H:%M")}',
-            'content': base64.b64encode(data_json.encode()).decode('utf-8'),
-            'sha': sha
-        }
-        
-        response = requests.put(url, headers=headers, json=data)
-        
-        if response.status_code in [200, 201]:
-            print("✅ تم رفع البيانات لـ GitHub بنجاح!")
+            conn.commit()
+            print("✅ تم تهيئة قاعدة البيانات بنجاح!")
             return True
-        else:
-            print(f"❌ فشل الرفع: {response.status_code}")
-            return False
             
     except Exception as e:
-        print(f"❌ خطأ في الرفع لـ GitHub: {e}")
+        logger.error(f"❌ خطأ في تهيئة قاعدة البيانات: {e}")
         return False
-
-def download_from_github():
-    """تحميل البيانات من GitHub"""
-    try:
-        import base64
-        import requests
-        
-        github_token = os.getenv('GITHUB_TOKEN')
-        if not github_token:
-            return None
-            
-        # معلومات الريبو
-        repo_owner = "xcr431134"
-        repo_name = "bot-backup-data"
-        file_path = "data/users_data.json"
-        
-        url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{file_path}"
-        
-        headers = {
-            'Authorization': f'token {github_token}',
-            'Accept': 'application/vnd.github.v3+json'
-        }
-        
-        response = requests.get(url, headers=headers)
-        
-        if response.status_code == 200:
-            content = response.json()['content']
-            decoded_content = base64.b64decode(content).decode('utf-8')
-            users_data = json.loads(decoded_content)
-            print("✅ تم تحميل البيانات من GitHub بنجاح!")
-            return users_data
-        else:
-            print("ℹ️ لا توجد بيانات على GitHub")
-            return None
-            
-    except Exception as e:
-        print(f"❌ خطأ في التحميل من GitHub: {e}")
-        return None
-
-def load_users():
-    """تحميل البيانات مع محاولة الاستعادة من GitHub"""
-    try:
-        # أولاً: حاول التحميل من GitHub
-        github_data = download_from_github()
-        if github_data:
-            # احفظ البيانات محلياً
-            with open(DATA_FILE, 'w', encoding='utf-8') as f:
-                json.dump(github_data, f, ensure_ascii=False, indent=2)
-            return github_data
-        
-        # إذا ما في اتصال: جرب الملف المحلي
-        with open(DATA_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            print(f"📂 تم تحميل {len(data)} مستخدم من الذاكرة المحلية")
-            return data
-            
-    except FileNotFoundError:
-        print("📂 لا يوجد بيانات سابقة")
-        return {}
-    except Exception as e:
-        print(f"❌ خطأ في تحميل البيانات: {e}")
-        return {}
-
-def save_users(users_data):
-    """حفظ البيانات مع نسخ احتياطي تلقائي"""
-    try:
-        # الحفظ المحلي
-        with open(DATA_FILE, 'w', encoding='utf-8') as f:
-            json.dump(users_data, f, ensure_ascii=False, indent=2)
-        print(f"💾 تم حفظ {len(users_data)} مستخدم محلياً")
-        
-        # نسخ احتياطي لـ GitHub (في الخلفية)
-        backup_thread = threading.Thread(target=upload_to_github)
-        backup_thread.daemon = True
-        backup_thread.start()
-        
-        return True
-    except Exception as e:
-        print(f"❌ خطأ في حفظ البيانات: {e}")
-        return False
+    finally:
+        if conn:
+            conn.close()
 
 def get_user(user_id):
-    """جلب بيانات المستخدم"""
-    users_data = load_users()
-    user_id_str = str(user_id)
-    
-    if user_id_str in users_data:
-        user_data = users_data[user_id_str]
-        
-        last_reset = user_data.get('last_reset_date', '2000-01-01')
-        today = datetime.now().strftime('%Y-%m-%d')
-        
-        if last_reset != today:
-            user_data['games_played_today'] = 0
-            user_data['last_reset_date'] = today
+    """جلب بيانات المستخدم من قاعدة البيانات"""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return create_default_user(user_id)
             
-            daily_bonus = 0.75
-            user_data['balance'] += daily_bonus
-            user_data['total_earned'] += daily_bonus
-            print(f"🎁 منح مكافأة يومية {daily_bonus} لـ {user_id}")
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM users WHERE user_id = %s", (str(user_id),))
+            user_data = cur.fetchone()
             
-            vip_bonus = {1: 0.5, 2: 1.0, 3: 2.0}
-            if user_data['vip_level'] in vip_bonus:
-                bonus = vip_bonus[user_data['vip_level']]
-                user_data['balance'] += bonus
-                user_data['total_earned'] += bonus
-                print(f"💎 منح مكافأة VIP {bonus} لـ {user_id}")
-            
-            save_users(users_data)
-        
-        return user_data
-    
+            if user_data:
+                user_dict = dict(user_data)
+                
+                # التحقق من إعادة تعيين المحاولات اليومية
+                last_reset = user_dict.get('last_reset_date', '2000-01-01')
+                today = datetime.now().strftime('%Y-%m-%d')
+                
+                if last_reset != today:
+                    user_dict['games_played_today'] = 0
+                    user_dict['last_reset_date'] = today
+                    
+                    # منح المكافأة اليومية
+                    daily_bonus = 0.75
+                    user_dict['balance'] += daily_bonus
+                    user_dict['total_earned'] += daily_bonus
+                    
+                    # منح مكافأة VIP
+                    vip_bonus = {1: 0.5, 2: 1.0, 3: 2.0}
+                    if user_dict['vip_level'] in vip_bonus:
+                        bonus = vip_bonus[user_dict['vip_level']]
+                        user_dict['balance'] += bonus
+                        user_dict['total_earned'] += bonus
+                    
+                    # تحديث البيانات في قاعدة البيانات
+                    update_user(user_dict)
+                
+                return user_dict
+            else:
+                return create_default_user(user_id)
+                
+    except Exception as e:
+        logger.error(f"❌ خطأ في جلب بيانات المستخدم {user_id}: {e}")
+        return create_default_user(user_id)
+    finally:
+        if conn:
+            conn.close()
+
+def create_default_user(user_id):
+    """إنشاء مستخدم جديد بإعدادات افتراضية"""
     user_data = {
-        'user_id': user_id_str,
+        'user_id': str(user_id),
         'username': "",
         'first_name': "",
         'balance': 0.75,
@@ -235,24 +191,72 @@ def get_user(user_id):
         'last_daily_check': datetime.now().strftime('%Y-%m-%d')
     }
     
-    users_data[user_id_str] = user_data
-    save_users(users_data)
-    print(f"🆕 تم إنشاء مستخدم جديد: {user_id_str}")
+    save_user(user_data)
     return user_data
 
 def save_user(user_data):
-    """حفظ بيانات مستخدم"""
-    users_data = load_users()
-    user_id = user_data['user_id']
-    users_data[user_id] = user_data
-    
-    print(f"💾 حفظ بيانات user_id: {user_id}")
-    return save_users(users_data)
+    """حفظ بيانات المستخدم في قاعدة البيانات"""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return False
+            
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO users (
+                    user_id, username, first_name, balance, referrals_count, referrals_new,
+                    games_played_today, total_games_played, total_earned, total_deposits,
+                    vip_level, registration_date, last_activity, last_reset_date,
+                    withdrawal_address, registration_days, last_daily_check
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+                ON CONFLICT (user_id) DO UPDATE SET
+                    username = EXCLUDED.username,
+                    first_name = EXCLUDED.first_name,
+                    balance = EXCLUDED.balance,
+                    referrals_count = EXCLUDED.referrals_count,
+                    referrals_new = EXCLUDED.referrals_new,
+                    games_played_today = EXCLUDED.games_played_today,
+                    total_games_played = EXCLUDED.total_games_played,
+                    total_earned = EXCLUDED.total_earned,
+                    total_deposits = EXCLUDED.total_deposits,
+                    vip_level = EXCLUDED.vip_level,
+                    last_activity = EXCLUDED.last_activity,
+                    last_reset_date = EXCLUDED.last_reset_date,
+                    withdrawal_address = EXCLUDED.withdrawal_address,
+                    registration_days = EXCLUDED.registration_days,
+                    last_daily_check = EXCLUDED.last_daily_check
+            """, (
+                user_data['user_id'], user_data['username'], user_data['first_name'],
+                user_data['balance'], user_data['referrals_count'], user_data['referrals_new'],
+                user_data['games_played_today'], user_data['total_games_played'],
+                user_data['total_earned'], user_data['total_deposits'], user_data['vip_level'],
+                user_data['registration_date'], user_data['last_activity'],
+                user_data['last_reset_date'], user_data['withdrawal_address'],
+                user_data['registration_days'], user_data['last_daily_check']
+            ))
+            
+            conn.commit()
+            return True
+            
+    except Exception as e:
+        logger.error(f"❌ خطأ في حفظ بيانات المستخدم {user_data['user_id']}: {e}")
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+def update_user(user_data):
+    """تحديث بيانات المستخدم (نسخة مبسطة لـ save_user)"""
+    return save_user(user_data)
 
 def update_user_activity(user_id):
+    """تحديث نشاط المستخدم"""
     user = get_user(user_id)
     user['last_activity'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
+    # حساب أيام التسجيل
     registration_date = datetime.strptime(user['registration_date'].split()[0], '%Y-%m-%d')
     current_date = datetime.now()
     days_registered = (current_date - registration_date).days
@@ -295,7 +299,9 @@ def can_withdraw(user):
     has_10_days = user.get('registration_days', 0) >= 10
     has_150_balance = user['balance'] >= 150
     has_address = bool(user.get('withdrawal_address', ''))
-    return has_10_days and has_150_balance and has_address
+    has_15_new_refs = user.get('referrals_new', 0) >= 15  # ⭐ الشرط الجديد
+    
+    return has_10_days and has_150_balance and has_address and has_15_new_refs
 
 # 🎯 الواجهة الرئيسية
 @bot.message_handler(commands=['start', 'profile'])
@@ -572,6 +578,8 @@ def handle_withdraw(call):
                 error_msg = f"❌ الحد الأدنى للسحب هو 150 USDT\n💰 رصيدك الحالي: {user['balance']:.1f} USDT"
             elif not user.get('withdrawal_address'):
                 error_msg = "❌ يرجى إعداد عنوان المحفظة أولاً"
+            elif user.get('referrals_new', 0) < 15:  # ⭐ الرسالة الجديدة
+                error_msg = f"❌ تحتاج إلى 15 إحالة جديدة على الأقل للسحب\n👥 إحالاتك الجديدة: {user.get('referrals_new', 0)}/15"
             else:
                 error_msg = "❌ لا يمكن السحب حالياً، يرجى المحاولة لاحقاً"
             
@@ -607,7 +615,8 @@ def show_withdrawal_options(message, user):
             f"💰 نظام السحب\n\n"
             f"💳 عنوان المحفظة: {user['withdrawal_address']}\n"
             f"💰 الرصيد المتاح: {user['balance']:.1f} USDT\n"
-            f"📅 أيام التسجيل: {user.get('registration_days', 0)}/10 يوم\n\n"
+            f"📅 أيام التسجيل: {user.get('registration_days', 0)}/10 يوم\n"
+            f"👥 الإحالات الجديدة: {user.get('referrals_new', 0)}/15\n\n"
             f"اختر مبلغ السحب:",
             reply_markup=keyboard
         )
@@ -658,6 +667,10 @@ def process_withdrawal(call):
             bot.answer_callback_query(call.id, f"❌ تحتاج إلى 10 أيام تسجيل للسحب\n📅 أيامك: {user.get('registration_days', 0)}", show_alert=True)
             return
         
+        if user.get('referrals_new', 0) < 15:
+            bot.answer_callback_query(call.id, f"❌ تحتاج إلى 15 إحالة جديدة للسحب\n👥 إحالاتك: {user.get('referrals_new', 0)}/15", show_alert=True)
+            return
+        
         user['balance'] -= amount
         save_user(user)
         
@@ -670,6 +683,7 @@ def process_withdrawal(call):
 💰 المبلغ: {amount:.1f} USDT
 📊 الرصيد المتبقي: {user['balance']:.1f} USDT
 📅 أيام التسجيل: {user.get('registration_days', 0)} يوم
+👥 الإحالات الجديدة: {user.get('referrals_new', 0)}/15
 📅 الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 ✅ تم خصم المبلغ من رصيد المستخدم"""
@@ -847,6 +861,54 @@ def quick_add(message):
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ: {e}")
 
+@bot.message_handler(commands=['deposit'])
+def deposit_command(message):
+    """إيداع رصيد للمستخدم - أمر إداري"""
+    if message.from_user.id not in ADMIN_IDS:
+        bot.reply_to(message, "❌ ليس لديك صلاحية!")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.reply_to(message, "❌ استخدم: /deposit [user_id] [amount]\nمثال: /deposit 123456789 50.5")
+            return
+        
+        user_id = int(parts[1])
+        amount = float(parts[2])
+        
+        if amount <= 0:
+            bot.reply_to(message, "❌ المبلغ يجب أن يكون أكبر من الصفر!")
+            return
+        
+        user = get_user(user_id)
+        user['balance'] += amount
+        user['total_deposits'] += amount
+        user['total_earned'] += amount
+        
+        save_user(user)
+        
+        # إرسال إشعار للمستخدم
+        try:
+            bot.send_message(
+                user_id,
+                f"🎉 تم إيداع {amount:.1f} USDT إلى رصيدك!\n"
+                f"💰 رصيدك الجديد: {user['balance']:.1f} USDT\n"
+                f"💳 الإيداع من: الإدارة"
+            )
+        except:
+            pass
+        
+        bot.reply_to(message, 
+            f"✅ تم إيداع {amount:.1f} USDT للمستخدم {user_id}\n"
+            f"👤 الاسم: {user['first_name']}\n"
+            f"💰 الرصيد الجديد: {user['balance']:.1f} USDT\n"
+            f"💳 إجمالي الإيداعات: {user['total_deposits']:.1f} USDT"
+        )
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ خطأ: {e}")
+
 @bot.message_handler(commands=['addreferral'])
 def add_referral(message):
     if message.from_user.id not in ADMIN_IDS:
@@ -936,6 +998,7 @@ def user_info(message):
 👤 الاسم: {user['first_name']}
 💰 الرصيد: {user['balance']:.1f} USDT
 👥 الإحالات: {user['referrals_count']}
+👥 الإحالات الجديدة: {user.get('referrals_new', 0)}/15
 🎯 المحاولات: {user['games_played_today']}/{total_attempts} (متبقي: {remaining_attempts})
 💎 VIP: {get_vip_level_name(user['vip_level'])}
 🎮 الألعاب: {user['total_games_played']}
@@ -959,28 +1022,47 @@ def stats(message):
     try:
         update_user_activity(message.from_user.id)
         
-        users_data = load_users()
-        users = list(users_data.values())
-        
-        total_balance = sum(user['balance'] for user in users)
-        total_referrals = sum(user['referrals_count'] for user in users)
-        total_deposits = sum(user['total_deposits'] for user in users)
-        active_users = sum(1 for user in users if user['balance'] > 0 or user['games_played_today'] > 0)
-        
-        vip_counts = {0: 0, 1: 0, 2: 0, 3: 0}
-        for user in users:
-            vip_level = user.get('vip_level', 0)
-            vip_counts[vip_level] = vip_counts.get(vip_level, 0) + 1
+        conn = get_db_connection()
+        if not conn:
+            bot.reply_to(message, "❌ لا يمكن الاتصال بقاعدة البيانات")
+            return
+            
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT COUNT(*) as total_users FROM users")
+            total_users = cur.fetchone()['total_users']
+            
+            cur.execute("SELECT COUNT(*) as active_users FROM users WHERE balance > 0 OR games_played_today > 0")
+            active_users = cur.fetchone()['active_users']
+            
+            cur.execute("SELECT SUM(balance) as total_balance FROM users")
+            total_balance_result = cur.fetchone()['total_balance']
+            total_balance = total_balance_result if total_balance_result else 0
+            
+            cur.execute("SELECT SUM(referrals_count) as total_referrals FROM users")
+            total_referrals_result = cur.fetchone()['total_referrals']
+            total_referrals = total_referrals_result if total_referrals_result else 0
+            
+            cur.execute("SELECT SUM(total_deposits) as total_deposits FROM users")
+            total_deposits_result = cur.fetchone()['total_deposits']
+            total_deposits = total_deposits_result if total_deposits_result else 0
+            
+            cur.execute("SELECT COUNT(*) as today_players FROM users WHERE games_played_today > 0")
+            today_players = cur.fetchone()['today_players']
+            
+            cur.execute("SELECT vip_level, COUNT(*) as count FROM users GROUP BY vip_level")
+            vip_counts = {0: 0, 1: 0, 2: 0, 3: 0}
+            for row in cur.fetchall():
+                vip_counts[row['vip_level']] = row['count']
         
         stats_text = f"""
 📈 إحصائيات البوت:
 
-👥 إجمالي المستخدمين: {len(users)}
+👥 إجمالي المستخدمين: {total_users}
 👤 المستخدمين النشطين: {active_users}
 💰 إجمالي الرصيد: {total_balance:.1f} USDT
 👥 إجمالي الإحالات: {total_referrals}
 💳 إجمالي الإيداعات: {total_deposits:.1f} USDT
-🎯 مستخدمين بلعبوا اليوم: {sum(1 for user in users if user['games_played_today'] > 0)}
+🎯 مستخدمين بلعبوا اليوم: {today_players}
 
 💎 إحصائيات VIP:
 🟢 مبتدئ: {vip_counts[0]}
@@ -992,84 +1074,118 @@ def stats(message):
         
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 # ======================
-# 🆕 أوامر GitHub Backup
+# 🚀 تشغيل النظام المحسن مع إصلاح التوقف
 # ======================
-
-@bot.message_handler(commands=['gitbackup'])
-def manual_backup(message):
-    """نسخ احتياطي يدوي"""
-    if message.from_user.id not in ADMIN_IDS:
-        return
-        
-    success = upload_to_github()
-    if success:
-        bot.reply_to(message, "✅ تم النسخ الاحتياطي لـ GitHub بنجاح!")
-    else:
-        bot.reply_to(message, "❌ فشل النسخ الاحتياطي!")
-
-@bot.message_handler(commands=['gitrestore'])
-def manual_restore(message):
-    """استعادة يدوية من GitHub"""
-    if message.from_user.id not in ADMIN_IDS:
-        return
-        
-    users_data = download_from_github()
-    if users_data:
-        save_users(users_data)  # حفظ محلي
-        bot.reply_to(message, f"✅ تم استعادة {len(users_data)} مستخدم من GitHub!")
-    else:
-        bot.reply_to(message, "❌ لا توجد بيانات للاستعادة!")
-
-# =============================================
-# 🚀 تشغيل البوت المحسن
-# =============================================
 
 def run_bot():
-    """تشغيل البوت مع معالجة الأخطاء"""
-    try:
-        print("=" * 50)
-        print("🚀 STARTING USDT BOT")
-        print("=" * 50)
-        
-        if not BOT_TOKEN:
-            print("❌ CRITICAL: BOT_TOKEN is not set!")
-            print("💡 Please add BOT_TOKEN to environment variables")
-            return
-        
-        print(f"✅ BOT_TOKEN loaded: {BOT_TOKEN[:10]}...{BOT_TOKEN[-5:]}")
-        print("🤖 Starting Telegram Bot Polling...")
-        
-        # استخدم polling بسيط
-        bot.polling(
-            none_stop=True,
-            timeout=60,
-            long_polling_timeout=60
-        )
-        
-    except Exception as e:
-        print(f"❌ BOT CRASHED: {repr(e)}")
-        import traceback
-        traceback.print_exc()
-        print("🔄 Restarting in 10 seconds...")
-        time.sleep(10)
-        run_bot()
+    """تشغيل البوت مع معالجة الأخطاء المحسنة وإعادة التشغيل التلقائي"""
+    attempt = 0
+    max_attempts = 10
+    
+    while attempt < max_attempts:
+        try:
+            print("=" * 50)
+            print(f"🚀 STARTING USDT BOT - ATTEMPT {attempt + 1}/{max_attempts}")
+            print("=" * 50)
+            
+            if not BOT_TOKEN:
+                logger.error("❌ CRITICAL: BOT_TOKEN is not set!")
+                return
+            
+            # تهيئة قاعدة البيانات
+            if not init_database():
+                logger.error("❌ فشل في تهيئة قاعدة البيانات!")
+                time.sleep(10)
+                attempt += 1
+                continue
+            
+            print("✅ Database initialized successfully")
+            print("🤖 Starting Telegram Bot Polling...")
+            
+            # إعدادات polling محسنة مع مراقبة الاستمرارية
+            bot.polling(
+                none_stop=True,
+                timeout=90,
+                long_polling_timeout=60,
+                restart_on_change=True,
+                interval=1
+            )
+            
+            # إذا وصلنا هنا، يعني ال polling توقف بشكل طبيعي
+            print("🔄 Bot polling stopped normally, restarting...")
+            break
+            
+        except Exception as e:
+            attempt += 1
+            logger.error(f"❌ BOT CRASHED (Attempt {attempt}/{max_attempts}): {repr(e)}")
+            import traceback
+            traceback.print_exc()
+            
+            if attempt < max_attempts:
+                wait_time = min(attempt * 10, 60)  # زيادة وقت الانتظار تدريجياً
+                print(f"🔄 Restarting in {wait_time} seconds...")
+                time.sleep(wait_time)
+            else:
+                logger.error("❌ MAXIMUM RESTART ATTEMPTS REACHED! Bot stopped.")
+                break
 
 def run_flask():
-    """تشغيل Flask server"""
-    try:
-        print("🌐 Starting Flask server on port 10000...")
-        app.run(host='0.0.0.0', port=10000, debug=False)
-    except Exception as e:
-        print(f"❌ Flask error: {e}")
+    """تشغيل Flask server مع إعادة تشغيل تلقائي"""
+    while True:
+        try:
+            print("🌐 Starting Flask server on port 10000...")
+            app.run(host='0.0.0.0', port=10000, debug=False, use_reloader=False)
+        except Exception as e:
+            logger.error(f"❌ Flask server crashed: {e}")
+            print("🔄 Restarting Flask server in 10 seconds...")
+            time.sleep(10)
+
+def keep_alive():
+    """إرسال طلبات دورية للحفاظ على نشاط البوت"""
+    while True:
+        try:
+            # إرسال طلب health check كل 5 دقائق
+            requests.get('https://your-bot-name.onrender.com/health', timeout=10)
+            print("✅ Keep-alive request sent")
+            time.sleep(300)  # 5 دقائق
+        except Exception as e:
+            print(f"❌ Keep-alive failed: {e}")
+            time.sleep(60)  # حاول مرة أخرى بعد دقيقة
 
 if __name__ == "__main__":
-    print("🎯 Starting USDT Bot System...")
+    print("🎯 Starting USDT Bot System with Auto-Restart...")
     
     # تشغيل البوت في thread منفصل
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
     
-    # تشغيل Flask في thread الرئيسي
-    run_flask()
+    # تشغيل Flask في thread منفصل
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    
+    # تشغيل keep-alive في thread منفصل
+    keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
+    keep_alive_thread.start()
+    
+    # البقاء في loop رئيسي
+    try:
+        while True:
+            time.sleep(60)
+            # فحص إذا كانت الthreads لا تزال شغالة
+            if not bot_thread.is_alive():
+                print("🔄 Bot thread died, restarting...")
+                bot_thread = threading.Thread(target=run_bot, daemon=True)
+                bot_thread.start()
+                
+            if not flask_thread.is_alive():
+                print("🔄 Flask thread died, restarting...")
+                flask_thread = threading.Thread(target=run_flask, daemon=True)
+                flask_thread.start()
+                
+    except KeyboardInterrupt:
+        print("⏹️ Bot stopped by user")
