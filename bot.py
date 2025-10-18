@@ -1277,28 +1277,28 @@ def health():
     return "✅ OK", 200
 
 def run_bot():
-    """تشغيل البوت بإعدادات مبسطة"""
+    """تشغيل البوت بإعدادات بديلة"""
     print("🚀 جاري تشغيل البوت...")
     
     try:
         bot.delete_webhook()
         print("✅ تم تنظيف الـ webhook")
-    except Exception as e:
-        print(f"ℹ️  {e}")
+        time.sleep(1)
+    except:
+        pass
     
     if not init_database():
         print("⚠️  تم المتابعة بدون قاعدة البيانات")
     
-    print("🔄 بدء تشغيل البوت...")
+    print("🔄 بدء Polling...")
     
     while True:
         try:
-            # ✅ الإعدادات المبسطة والشغالة
-            bot.infinity_polling(
-                timeout=60,
-                skip_pending=True
+            # ✅ أبسط إعداد ممكن
+            bot.polling(
+                none_stop=True,
+                timeout=30
             )
         except Exception as e:
             print(f"❌ خطأ: {e}")
-            print("🔄 إعادة التشغيل بعد 5 ثواني...")
             time.sleep(5)
