@@ -1300,8 +1300,7 @@ def run_bot():
                 timeout=60,
                 long_polling_timeout=30,
                 skip_pending=True,    # ✅ أهم إضافة!
-                allowed_updates=[],
-                request_timeout=90
+                allowed_updates=[]
             )
         except Exception as e:
             print(f"❌ خطأ في Polling: {e}")
