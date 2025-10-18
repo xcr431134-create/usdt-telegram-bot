@@ -53,18 +53,28 @@ bot = telebot.TeleBot(BOT_TOKEN)
 print("✅ تم إنشاء البوت بنجاح!")
 
 # ======================
-# 🗄️ نظام قاعدة البيانات SQLite
+# 🗄️ نظام قاعدة البيانات SQLite - معدل لـ Railway
 # ======================
 
-DB_FILE = 'usdt_bot.db'
+# استخدام مسار مخصص لـ Railway
+DB_FILE = '/tmp/usdt_bot.db' if 'RAILWAY_ENVIRONMENT' in os.environ else 'usdt_bot.db'
 db_lock = threading.Lock()
 
 def init_database():
-    """تهيئة قاعدة البيانات"""
+    """تهيئة قاعدة البيانات مع معالجة محسنة للأخطاء"""
     with db_lock:
         try:
-            conn = sqlite3.connect(DB_FILE)
+            # إنشاء المجلد إذا لم يكن موجوداً (لـ Railway)
+            os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
+            
+            conn = sqlite3.connect(DB_FILE, check_same_thread=False)
             cursor = conn.cursor()
+            
+            # تفعيل الميزات المتقدمة
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA cache_size=-64000")
+            cursor.execute("PRAGMA foreign_keys=ON")
             
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS users (
@@ -88,22 +98,42 @@ def init_database():
                 )
             """)
             
+            # إنشاء فهارس لتحسين الأداء
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_id ON users(user_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_balance ON users(balance)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_vip_level ON users(vip_level)")
+            
             conn.commit()
             conn.close()
-            print("✅ تم تهيئة قاعدة البيانات SQLite بنجاح!")
+            print(f"✅ تم تهيئة قاعدة البيانات SQLite بنجاح في: {DB_FILE}")
             return True
+            
         except Exception as e:
             print(f"❌ خطأ في تهيئة قاعدة البيانات: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
+def get_db_connection():
+    """إنشاء اتصال آمن بقاعدة البيانات"""
+    try:
+        conn = sqlite3.connect(DB_FILE, check_same_thread=False, timeout=30)
+        conn.row_factory = sqlite3.Row
+        return conn
+    except Exception as e:
+        print(f"❌ فشل في إنشاء اتصال بقاعدة البيانات: {e}")
+        return None
+
 def get_user(user_id):
-    """جلب بيانات المستخدم"""
+    """جلب بيانات المستخدم مع معالجة محسنة للأخطاء"""
     with db_lock:
+        conn = None
         try:
-            conn = sqlite3.connect(DB_FILE)
-            conn.row_factory = sqlite3.Row
+            conn = get_db_connection()
+            if not conn:
+                return create_default_user(user_id)
+                
             cursor = conn.cursor()
-            
             cursor.execute("SELECT * FROM users WHERE user_id = ?", (str(user_id),))
             user_data = cursor.fetchone()
             
@@ -133,15 +163,16 @@ def get_user(user_id):
                     # تحديث البيانات
                     save_user(user_dict)
                 
-                conn.close()
                 return user_dict
             else:
-                conn.close()
                 return create_default_user(user_id)
                 
         except Exception as e:
             print(f"❌ خطأ في جلب بيانات المستخدم {user_id}: {e}")
             return create_default_user(user_id)
+        finally:
+            if conn:
+                conn.close()
 
 def create_default_user(user_id):
     """إنشاء مستخدم جديد بإعدادات افتراضية"""
@@ -169,10 +200,14 @@ def create_default_user(user_id):
     return user_data
 
 def save_user(user_data):
-    """حفظ بيانات المستخدم"""
+    """حفظ بيانات المستخدم مع معالجة محسنة للأخطاء"""
     with db_lock:
+        conn = None
         try:
-            conn = sqlite3.connect(DB_FILE)
+            conn = get_db_connection()
+            if not conn:
+                return False
+                
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -193,13 +228,16 @@ def save_user(user_data):
             ))
             
             conn.commit()
-            conn.close()
             return True
             
         except Exception as e:
             print(f"❌ خطأ في حفظ بيانات المستخدم {user_data['user_id']}: {e}")
             return False
+        finally:
+            if conn:
+                conn.close()
 
+# 🔄 باقي الدوال تبقى كما هي (update_user_activity, get_vip_level_name, etc.)
 def update_user_activity(user_id):
     """تحديث نشاط المستخدم"""
     user = get_user(user_id)
@@ -251,6 +289,10 @@ def can_withdraw(user):
     has_15_new_refs = user.get('referrals_new', 0) >= 15
     
     return has_10_days and has_150_balance and has_address and has_15_new_refs
+
+# 🎯 جميع ال handlers تبقى كما هي بدون تغيير
+# (start_command, show_games, play_slot, play_dice, etc.)
+# ... [كل الكود الخاص بالواجهة والأوامر يبقى نفسو]
 
 # 🎯 الواجهة الرئيسية
 @bot.message_handler(commands=['start', 'profile'])
@@ -973,7 +1015,11 @@ def stats(message):
         update_user_activity(message.from_user.id)
         
         with db_lock:
-            conn = sqlite3.connect(DB_FILE)
+            conn = get_db_connection()
+            if not conn:
+                bot.reply_to(message, "❌ لا يمكن الاتصال بقاعدة البيانات")
+                return
+                
             cursor = conn.cursor()
             
             cursor.execute("SELECT COUNT(*) FROM users")
