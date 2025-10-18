@@ -1299,16 +1299,9 @@ def run_bot():
             bot.polling(
                 none_stop=True,
                 timeout=60,
-                long_polling_timeout=30,
-                skip_pending=True,    # ✅ أهم إضافة!
-                request_timeout=90
+                skip_pending=True    # ✅ أهم إضافة!
             )
         except Exception as e:
             print(f"❌ خطأ في Polling: {e}")
             print("🔄 إعادة المحاولة بعد 10 ثواني...")
             time.sleep(10)
-
-if __name__ == "__main__":
-    print("🎯 نظام التشغيل المحسن - الإصدار النهائي")
-    print("🕒 وقت التشغيل:", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-    run_bot()
