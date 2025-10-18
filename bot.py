@@ -1,3 +1,292 @@
+import os
+import telebot
+import sqlite3
+import threading
+from flask import Flask
+import logging
+import time
+from datetime import datetime, timedelta
+
+# ✅ تفعيل السجلات المفصلة
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+
+print("=" * 50)
+print("🔍 بدء تشخيص البوت...")
+print("=" * 50)
+
+# فحص BOT_TOKEN
+BOT_TOKEN = os.environ.get('BOT_TOKEN')
+print(f"🔑 BOT_TOKEN موجود: {'✅ نعم' if BOT_TOKEN else '❌ لا'}")
+
+if not BOT_TOKEN:
+    print("❌ خطأ: BOT_TOKEN غير موجود في environment variables!")
+    exit(1)
+
+# 🎯 تعريف البوت هنا في البداية مباشرة
+try:
+    bot = telebot.TeleBot(BOT_TOKEN)
+    print("✅ تم إنشاء كائن البوت بنجاح")
+except Exception as e:
+    print(f"❌ فشل في إنشاء البوت: {e}")
+    exit(1)
+
+# ======================
+# 🔐 إعدادات المشرفين
+# ======================
+
+ADMINS = ['8400225549']  # قائمة IDs المشرفين
+
+def is_admin(user_id):
+    """التحقق إذا المستخدم مشرف"""
+    return str(user_id) in ADMINS
+
+# ======================
+# 🗄️ نظام SQLite معدل
+# ======================
+
+DB_FILE = os.path.join(os.getcwd(), 'usdt_bot.db')
+db_lock = threading.Lock()
+
+# مستويات VIP
+VIP_LEVELS = {
+    0: {"name": "🟢 مبتدئ", "daily_bonus": 0.8, "max_attempts": 3},
+    1: {"name": "🔵 متقدم", "daily_bonus": 1.5, "max_attempts": 5},
+    2: {"name": "🟣 محترف", "daily_bonus": 2.5, "max_attempts": 8},
+    3: {"name": "🟠 خبير", "daily_bonus": 4.0, "max_attempts": 12},
+    4: {"name": "🔴 ماستر", "daily_bonus": 6.0, "max_attempts": 18}
+}
+
+def init_database():
+    """تهيئة قاعدة البيانات"""
+    try:
+        print(f"📁 محاولة إنشاء قاعدة بيانات في: {DB_FILE}")
+        
+        conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+        cursor = conn.cursor()
+        
+        # إنشاء الجدول الرئيسي للمستخدمين
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id TEXT PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                balance REAL DEFAULT 0.0,
+                referral_count INTEGER DEFAULT 0,
+                new_referrals INTEGER DEFAULT 0,
+                vip_level INTEGER DEFAULT 0,
+                attempts INTEGER DEFAULT 0,
+                total_earnings REAL DEFAULT 0.0,
+                total_deposits REAL DEFAULT 0.0,
+                registration_date TEXT,
+                last_activity TEXT,
+                last_mining_date TEXT,
+                referral_bonus_claimed BOOLEAN DEFAULT FALSE
+            )
+        """)
+        
+        conn.commit()
+        conn.close()
+        print(f"✅ تم تهيئة قاعدة البيانات بنجاح")
+        return True
+        
+    except Exception as e:
+        print(f"❌ خطأ في تهيئة قاعدة البيانات: {e}")
+        return False
+
+def get_db_connection():
+    """إنشاء اتصال آمن بقاعدة البيانات"""
+    try:
+        conn = sqlite3.connect(DB_FILE, check_same_thread=False, timeout=30)
+        conn.row_factory = sqlite3.Row
+        return conn
+    except Exception as e:
+        print(f"❌ فشل في الاتصال بقاعدة البيانات: {e}")
+        return None
+
+def get_user(user_id):
+    """جلب أو إنشاء مستخدم"""
+    with db_lock:
+        conn = None
+        try:
+            conn = get_db_connection()
+            if not conn:
+                return None
+                
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM users WHERE user_id = ?", (str(user_id),))
+            user_data = cursor.fetchone()
+            
+            if user_data:
+                user_dict = dict(user_data)
+                return user_dict
+            else:
+                # إنشاء مستخدم جديد
+                user_dict = {
+                    'user_id': str(user_id),
+                    'username': "",
+                    'first_name': "",
+                    'balance': 0.0,
+                    'referral_count': 0,
+                    'new_referrals': 0,
+                    'vip_level': 0,
+                    'attempts': 3,  # محاولات أساسية
+                    'total_earnings': 0.0,
+                    'total_deposits': 0.0,
+                    'registration_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'last_activity': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'last_mining_date': None,
+                    'referral_bonus_claimed': False
+                }
+                
+                cursor.execute("""
+                    INSERT INTO users (user_id, username, first_name, balance, referral_count, 
+                    new_referrals, vip_level, attempts, total_earnings, total_deposits, 
+                    registration_date, last_activity, last_mining_date, referral_bonus_claimed)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    user_dict['user_id'], user_dict['username'], user_dict['first_name'],
+                    user_dict['balance'], user_dict['referral_count'], user_dict['new_referrals'],
+                    user_dict['vip_level'], user_dict['attempts'], user_dict['total_earnings'],
+                    user_dict['total_deposits'], user_dict['registration_date'], 
+                    user_dict['last_activity'], user_dict['last_mining_date'],
+                    user_dict['referral_bonus_claimed']
+                ))
+                
+                conn.commit()
+                print(f"✅ تم إنشاء مستخدم جديد: {user_id}")
+                return user_dict
+                
+        except Exception as e:
+            print(f"❌ خطأ في جلب بيانات المستخدم: {e}")
+            return None
+        finally:
+            if conn:
+                conn.close()
+
+def update_user(user_id, **kwargs):
+    """تحديث بيانات المستخدم"""
+    with db_lock:
+        conn = None
+        try:
+            conn = get_db_connection()
+            if not conn:
+                return False
+                
+            cursor = conn.cursor()
+            set_clause = ", ".join([f"{key} = ?" for key in kwargs.keys()])
+            values = list(kwargs.values())
+            values.append(str(user_id))
+            
+            cursor.execute(f"UPDATE users SET {set_clause} WHERE user_id = ?", values)
+            conn.commit()
+            return True
+            
+        except Exception as e:
+            print(f"❌ خطأ في تحديث المستخدم: {e}")
+            return False
+        finally:
+            if conn:
+                conn.close()
+
+def get_mining_time_left(user_id):
+    """حساب الوقت المتبقي للمكافأة اليومية"""
+    user = get_user(user_id)
+    if not user or not user['last_mining_date']:
+        return "جاهز الآن! ✅"
+    
+    last_mining = datetime.strptime(user['last_mining_date'], '%Y-%m-%d %H:%M:%S')
+    next_mining = last_mining + timedelta(hours=24)
+    now = datetime.now()
+    
+    if now >= next_mining:
+        return "جاهز الآن! ✅"
+    
+    time_left = next_mining - now
+    hours = time_left.seconds // 3600
+    minutes = (time_left.seconds % 3600) // 60
+    return f"{hours:02d}س {minutes:02d}د ⏳"
+
+def get_days_since_registration(user_id):
+    """حساب عدد الأيام منذ التسجيل"""
+    user = get_user(user_id)
+    if not user:
+        return 0
+    
+    reg_date = datetime.strptime(user['registration_date'], '%Y-%m-%d %H:%M:%S')
+    now = datetime.now()
+    days = (now - reg_date).days
+    return max(0, days)
+
+def claim_daily_bonus(user_id):
+    """المطالبة بالمكافأة اليومية"""
+    user = get_user(user_id)
+    if not user:
+        return False, "❌ المستخدم غير موجود"
+    
+    # التحقق إذا المكافأة جاهزة
+    time_left = get_mining_time_left(user_id)
+    if "جاهز" not in time_left:
+        return False, f"⏰ لم يحن وقت المكافأة بعد\nالوقت المتبقي: {time_left}"
+    
+    # إضافة المكافأة
+    bonus_amount = VIP_LEVELS[user['vip_level']]['daily_bonus']
+    new_balance = user['balance'] + bonus_amount
+    new_earnings = user['total_earnings'] + bonus_amount
+    
+    success = update_user(
+        user_id,
+        balance=new_balance,
+        total_earnings=new_earnings,
+        last_mining_date=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    )
+    
+    if success:
+        return True, f"✅ تم استلام المكافأة اليومية: {bonus_amount} USDT"
+    else:
+        return False, "❌ خطأ في استلام المكافأة"
+
+def get_user_profile(user_id, first_name="", username=""):
+    """إنشاء نص الملف الشخصي"""
+    user = get_user(user_id)
+    if not user:
+        return "❌ المستخدم غير موجود"
+    
+    # تحديث النشاط
+    update_user(
+        user_id,
+        first_name=first_name,
+        username=username or "",
+        last_activity=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    )
+    
+    # حساب الإحالات المطلوبة
+    referrals_needed = max(0, 10 - user['referral_count'])
+    
+    # معلومات VIP
+    vip_info = VIP_LEVELS[user['vip_level']]
+    max_profit = vip_info['max_attempts'] * 1.0  # 1 USDT لكل محاولة كحد أقصى
+    
+    profile = f"📊 **الملف الشخصي**\n\n"
+    profile += f"👤 المستخدم: {user['first_name'] or 'غير معروف'}\n"
+    profile += f"🆔 المعرف: {user['user_id']}\n"
+    profile += f"💰 الرصيد: **{user['balance']:.2f} USDT**\n"
+    profile += f"👥 الإحالات: **{user['referral_count']} مستخدم** (مطلوب {referrals_needed})\n"
+    profile += f"📈 الإحالات الجديدة: **{user['new_referrals']}/1** (جائزة: 1 USDT + محاولة)\n"
+    profile += f"🏆 مستوى VIP: {vip_info['name']}\n"
+    profile += f"🎯 المحاولات المتبقية: **{user['attempts']}** ({vip_info['max_attempts']} أساسية + {max(0, user['attempts'] - vip_info['max_attempts'])} إضافية)\n"
+    profile += f"📅 أيام التسجيل: **{get_days_since_registration(user_id)} يوم**\n\n"
+    
+    profile += f"⏰ مكافأة التعدين: {get_mining_time_left(user_id)}\n\n"
+    
+    profile += f"💎 إجمالي الأرباح: **{user['total_earnings']:.2f} USDT**\n"
+    profile += f"💳 إجمالي الإيداعات: **{user['total_deposits']:.2f} USDT**\n"
+    profile += f"📅 تاريخ التسجيل: {user['registration_date']}"
+    
+    return profile
+
 # ======================
 # 🛠️ الأوامر الإدارية - بنفس الصيغة المطلوبة
 # ======================
@@ -301,128 +590,4 @@ def handle_userinfo(message):
         info_msg = f"👤 معلومات المستخدم:\n\n"
         info_msg += f"🆔 المعرف: {user['user_id']}\n"
         info_msg += f"👤 الاسم: {user['first_name'] or 'غير معروف'}\n"
-        info_msg += f"💰 الرصيد: {user['balance']:.2f} USDT\n"
-        info_msg += f"👥 الإحالات: {user['referral_count']}\n"
-        info_msg += f"🏆 مستوى VIP: {vip_info['name']}\n"
-        info_msg += f"🎯 المحاولات: {user['attempts']}\n"
-        info_msg += f"💎 إجمالي الأرباح: {user['total_earnings']:.2f} USDT\n"
-        info_msg += f"💳 إجمالي الإيداعات: {user['total_deposits']:.2f} USDT\n"
-        info_msg += f"📅 تاريخ التسجيل: {user['registration_date']}"
-        
-        bot.send_message(message.chat.id, info_msg)
-        
-    except Exception as e:
-        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
-
-@bot.message_handler(commands=['listusers'])
-def handle_listusers(message):
-    """📊 قائمة جميع المستخدمين - للمشرفين فقط"""
-    if not is_admin(message.from_user.id):
-        return
-    
-    try:
-        conn = get_db_connection()
-        if not conn:
-            bot.send_message(message.chat.id, "❌ خطأ في قاعدة البيانات!")
-            return
-        
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) as total FROM users")
-        total_users = cursor.fetchone()['total']
-        
-        cursor.execute("SELECT user_id, first_name, balance FROM users ORDER BY registration_date DESC LIMIT 20")
-        users = cursor.fetchall()
-        conn.close()
-        
-        if not users:
-            bot.send_message(message.chat.id, "❌ لا يوجد مستخدمين!")
-            return
-        
-        users_msg = f"👥 قائمة المستخدمين (آخر 20 من أصل {total_users}):\n\n"
-        
-        for i, user in enumerate(users, 1):
-            users_msg += f"{i}. {user['first_name'] or 'غير معروف'} (ID: {user['user_id']})\n"
-            users_msg += f"   💰 {user['balance']:.2f} USDT\n\n"
-        
-        bot.send_message(message.chat.id, users_msg)
-        
-    except Exception as e:
-        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
-
-@bot.message_handler(commands=['stats'])
-def handle_stats(message):
-    """📊 إحصائيات البوت - للمشرفين فقط"""
-    if not is_admin(message.from_user.id):
-        return
-    
-    try:
-        conn = get_db_connection()
-        if not conn:
-            bot.send_message(message.chat.id, "❌ خطأ في قاعدة البيانات!")
-            return
-        
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT COUNT(*) as total_users FROM users")
-        total_users = cursor.fetchone()['total_users']
-        
-        cursor.execute("SELECT SUM(balance) as total_balance FROM users")
-        total_balance = cursor.fetchone()['total_balance'] or 0
-        
-        cursor.execute("SELECT SUM(total_earnings) as total_earnings FROM users")
-        total_earnings = cursor.fetchone()['total_earnings'] or 0
-        
-        cursor.execute("SELECT SUM(total_deposits) as total_deposits FROM users")
-        total_deposits = cursor.fetchone()['total_deposits'] or 0
-        
-        cursor.execute("SELECT SUM(referral_count) as total_referrals FROM users")
-        total_referrals = cursor.fetchone()['total_referrals'] or 0
-        
-        conn.close()
-        
-        stats_msg = "📊 إحصائيات البوت:\n\n"
-        stats_msg += f"👥 إجمالي المستخدمين: {total_users}\n"
-        stats_msg += f"💰 إجمالي الرصيد: {total_balance:.2f} USDT\n"
-        stats_msg += f"💎 إجمالي الأرباح: {total_earnings:.2f} USDT\n"
-        stats_msg += f"💳 إجمالي الإيداعات: {total_deposits:.2f} USDT\n"
-        stats_msg += f"👥 إجمالي الإحالات: {total_referrals}"
-        
-        bot.send_message(message.chat.id, stats_msg)
-        
-    except Exception as e:
-        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
-
-@bot.message_handler(commands=['setvip'])
-def handle_setvip(message):
-    """💎 تعيين مستوى VIP - للمشرفين فقط"""
-    if not is_admin(message.from_user.id):
-        return
-    
-    try:
-        parts = message.text.split()
-        if len(parts) != 3:
-            bot.send_message(message.chat.id, "📝 usage: /setvip [user_id] [level]")
-            return
-        
-        target_user_id = parts[1]
-        vip_level = int(parts[2])
-        
-        if vip_level not in VIP_LEVELS:
-            bot.send_message(message.chat.id, "❌ مستوى VIP غير صحيح! استخدم الأرقام من 0 إلى 4")
-            return
-        
-        user = get_user(target_user_id)
-        if not user:
-            bot.send_message(message.chat.id, "❌ المستخدم غير موجود!")
-            return
-        
-        vip_info = VIP_LEVELS[vip_level]
-        success = update_user(target_user_id, vip_level=vip_level)
-        
-        if success:
-            bot.send_message(message.chat.id, f"✅ تم تعيين مستوى VIP للمستخدم {target_user_id} إلى {vip_info['name']}")
-        else:
-            bot.send_message(message.chat.id, "❌ فشل في تعيين مستوى VIP!")
-            
-    except Exception as e:
-        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
+        inf
