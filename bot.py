@@ -16,6 +16,7 @@ logging.basicConfig(
 )
 
 print("=" * 50)
+print("🧠 نظام إدارة الذاكرة المحسن")
 print("🔍 بدء تشخيص البوت...")
 print("=" * 50)
 
@@ -39,20 +40,21 @@ except Exception as e:
 # 🔐 إعدادات المشرفين
 # ======================
 
-ADMINS = ['8400225549']  # قائمة IDs المشرفين
+ADMIN_IDS = [8400225549]  # قائمة IDs المشرفين كأرقام
 
 def is_admin(user_id):
     """التحقق إذا المستخدم مشرف"""
-    return str(user_id) in ADMINS
+    return user_id in ADMIN_IDS
 
 # ======================
-# 🗄️ نظام SQLite معدل
+# 🗄️ نظام SQLite مع إدارة محسنة للذاكرة
 # ======================
 
-DB_FILE = os.path.join(os.getcwd(), 'usdt_bot.db')
+# 🧩 استخدام /tmp على Railway (ذاكرة مؤقتة لكن أسرع)
+DB_FILE = '/tmp/usdt_bot.db'
 db_lock = threading.Lock()
 
-# مستويات VIP
+# 🧩 مستويات VIP (تخزين في الذاكرة للوصول السريع)
 VIP_LEVELS = {
     0: {"name": "🟢 مبتدئ", "daily_bonus": 0.8, "max_attempts": 3, "price": 0},
     1: {"name": "🟢 برونز", "daily_bonus": 1.25, "max_attempts": 5, "price": 5},
@@ -60,13 +62,23 @@ VIP_LEVELS = {
     3: {"name": "🟡 جولد", "daily_bonus": 2.75, "max_attempts": 13, "price": 20}
 }
 
+# 🧩 كاش للذاكرة لتقليل عمليات قاعدة البيانات
+user_cache = {}
+CACHE_TIMEOUT = 300  # 5 دقائق
+
 def init_database():
-    """تهيئة قاعدة البيانات"""
+    """تهيئة قاعدة البيانات مع تحسينات الأداء"""
     try:
-        print(f"📁 محاولة إنشاء قاعدة بيانات في: {DB_FILE}")
+        print(f"📁 جاري إنشاء قاعدة بيانات في: {DB_FILE}")
         
         conn = sqlite3.connect(DB_FILE, check_same_thread=False)
         cursor = conn.cursor()
+        
+        # 🧩 تحسينات أداء SQLite
+        cursor.execute("PRAGMA journal_mode=WAL")  # وضع الكتابة المسبقة
+        cursor.execute("PRAGMA synchronous=NORMAL")  # تخفيف المزامنة
+        cursor.execute("PRAGMA cache_size=10000")  # زيادة الكاش
+        cursor.execute("PRAGMA temp_store=MEMORY")  # التخزين المؤقت في الذاكرة
         
         # إنشاء الجدول الرئيسي للمستخدمين
         cursor.execute("""
@@ -78,7 +90,7 @@ def init_database():
                 referral_count INTEGER DEFAULT 0,
                 new_referrals INTEGER DEFAULT 0,
                 vip_level INTEGER DEFAULT 0,
-                attempts INTEGER DEFAULT 0,
+                attempts INTEGER DEFAULT 3,
                 total_earnings REAL DEFAULT 0.75,
                 total_deposits REAL DEFAULT 0.0,
                 registration_date TEXT,
@@ -90,9 +102,13 @@ def init_database():
             )
         """)
         
+        # 🧩 إنشاء فهارس لتحسين سرعة البحث
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_id ON users(user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vip_level ON users(vip_level)")
+        
         conn.commit()
         conn.close()
-        print(f"✅ تم تهيئة قاعدة البيانات بنجاح")
+        print(f"✅ تم تهيئة قاعدة البيانات بنجاح مع تحسينات الأداء")
         return True
         
     except Exception as e:
@@ -100,89 +116,89 @@ def init_database():
         return False
 
 def get_db_connection():
-    """إنشاء اتصال آمن بقاعدة البيانات"""
+    """إنشاء اتصال آمن بقاعدة البيانات مع إدارة الموارد"""
     try:
         conn = sqlite3.connect(DB_FILE, check_same_thread=False, timeout=30)
-        conn.row_factory = sqlite3.Row
+        conn.row_factory = sqlite3.Row  # إرجاع النتائج كـ dictionary
         return conn
     except Exception as e:
         print(f"❌ فشل في الاتصال بقاعدة البيانات: {e}")
         return None
 
 def get_user(user_id):
-    """جلب أو إنشاء مستخدم"""
+    """جلب أو إنشاء مستخدم مع استخدام الكاش"""
+    user_id_str = str(user_id)
+    
+    # 🧩 التحقق من الكاش أولاً
+    cache_key = user_id_str
+    if cache_key in user_cache:
+        cached_data, timestamp = user_cache[cache_key]
+        if time.time() - timestamp < CACHE_TIMEOUT:
+            return cached_data
+    
     with db_lock:
         conn = None
         try:
             conn = get_db_connection()
             if not conn:
-                return None
+                return create_default_user(user_id_str)
                 
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM users WHERE user_id = ?", (str(user_id),))
+            cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id_str,))
             user_data = cursor.fetchone()
             
             if user_data:
                 user_dict = dict(user_data)
                 
-                # التحقق من إعادة تعيين المحاولات اليومية
+                # 🧩 التحقق من إعادة تعيين المحاولات اليومية
                 today = datetime.now().strftime('%Y-%m-%d')
                 if user_dict.get('last_reset_date') != today:
                     user_dict['games_played_today'] = 0
                     user_dict['last_reset_date'] = today
                     save_user(user_dict)
                 
+                # 🧩 تخزين في الكاش
+                user_cache[cache_key] = (user_dict, time.time())
                 return user_dict
             else:
-                # إنشاء مستخدم جديد
-                user_dict = {
-                    'user_id': str(user_id),
-                    'username': "",
-                    'first_name': "",
-                    'balance': 0.75,
-                    'referral_count': 0,
-                    'new_referrals': 0,
-                    'vip_level': 0,
-                    'attempts': 3,
-                    'total_earnings': 0.75,
-                    'total_deposits': 0.0,
-                    'registration_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'last_activity': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'last_mining_date': None,
-                    'withdrawal_address': "",
-                    'games_played_today': 0,
-                    'last_reset_date': datetime.now().strftime('%Y-%m-%d')
-                }
-                
-                cursor.execute("""
-                    INSERT INTO users (user_id, username, first_name, balance, referral_count, 
-                    new_referrals, vip_level, attempts, total_earnings, total_deposits, 
-                    registration_date, last_activity, last_mining_date, withdrawal_address,
-                    games_played_today, last_reset_date)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    user_dict['user_id'], user_dict['username'], user_dict['first_name'],
-                    user_dict['balance'], user_dict['referral_count'], user_dict['new_referrals'],
-                    user_dict['vip_level'], user_dict['attempts'], user_dict['total_earnings'],
-                    user_dict['total_deposits'], user_dict['registration_date'], 
-                    user_dict['last_activity'], user_dict['last_mining_date'],
-                    user_dict['withdrawal_address'], user_dict['games_played_today'],
-                    user_dict['last_reset_date']
-                ))
-                
-                conn.commit()
-                print(f"✅ تم إنشاء مستخدم جديد: {user_id}")
+                user_dict = create_default_user(user_id_str)
+                # 🧩 تخزين في الكاش
+                user_cache[cache_key] = (user_dict, time.time())
                 return user_dict
                 
         except Exception as e:
-            print(f"❌ خطأ في جلب بيانات المستخدم: {e}")
-            return None
+            print(f"❌ خطأ في جلب بيانات المستخدم {user_id}: {e}")
+            return create_default_user(user_id_str)
         finally:
             if conn:
                 conn.close()
 
+def create_default_user(user_id):
+    """إنشاء مستخدم جديد بإعدادات افتراضية"""
+    user_data = {
+        'user_id': user_id,
+        'username': "",
+        'first_name': "",
+        'balance': 0.75,
+        'referral_count': 0,
+        'new_referrals': 0,
+        'vip_level': 0,
+        'attempts': 3,
+        'total_earnings': 0.75,
+        'total_deposits': 0.0,
+        'registration_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'last_activity': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'last_mining_date': None,
+        'withdrawal_address': "",
+        'games_played_today': 0,
+        'last_reset_date': datetime.now().strftime('%Y-%m-%d')
+    }
+    
+    save_user(user_data)
+    return user_data
+
 def save_user(user_data):
-    """حفظ بيانات المستخدم"""
+    """حفظ بيانات المستخدم مع تحديث الكاش"""
     with db_lock:
         conn = None
         try:
@@ -210,6 +226,11 @@ def save_user(user_data):
             ))
             
             conn.commit()
+            
+            # 🧩 تحديث الكاش
+            cache_key = user_data['user_id']
+            user_cache[cache_key] = (user_data, time.time())
+            
             return True
             
         except Exception as e:
@@ -220,29 +241,31 @@ def save_user(user_data):
                 conn.close()
 
 def update_user(user_id, **kwargs):
-    """تحديث بيانات المستخدم"""
-    with db_lock:
-        conn = None
-        try:
-            conn = get_db_connection()
-            if not conn:
-                return False
-                
-            cursor = conn.cursor()
-            set_clause = ", ".join([f"{key} = ?" for key in kwargs.keys()])
-            values = list(kwargs.values())
-            values.append(str(user_id))
-            
-            cursor.execute(f"UPDATE users SET {set_clause} WHERE user_id = ?", values)
-            conn.commit()
-            return True
-            
-        except Exception as e:
-            print(f"❌ خطأ في تحديث المستخدم: {e}")
-            return False
-        finally:
-            if conn:
-                conn.close()
+    """تحديث بيانات المستخدم مع إدارة الكاش"""
+    user = get_user(user_id)
+    if not user:
+        return False
+    
+    # تحديث البيانات
+    for key, value in kwargs.items():
+        user[key] = value
+    
+    user['last_activity'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    return save_user(user)
+
+def clear_user_cache(user_id=None):
+    """مسح الكاش - للمساعدة في إدارة الذاكرة"""
+    if user_id:
+        user_id_str = str(user_id)
+        if user_id_str in user_cache:
+            del user_cache[user_id_str]
+    else:
+        user_cache.clear()
+
+# ======================
+# 🧮 دوال المساعدة
+# ======================
 
 def get_mining_time_left(user_id):
     """حساب الوقت المتبقي للمكافأة اليومية"""
@@ -279,12 +302,10 @@ def claim_daily_bonus(user_id):
     if not user:
         return False, "❌ المستخدم غير موجود"
     
-    # التحقق إذا المكافأة جاهزة
     time_left = get_mining_time_left(user_id)
     if "جاهز" not in time_left:
         return False, f"⏰ لم يحن وقت المكافأة بعد\nالوقت المتبقي: {time_left}"
     
-    # إضافة المكافأة
     bonus_amount = VIP_LEVELS[user['vip_level']]['daily_bonus']
     new_balance = user['balance'] + bonus_amount
     new_earnings = user['total_earnings'] + bonus_amount
@@ -325,7 +346,6 @@ def get_user_profile(user_id, first_name="", username=""):
     if not user:
         return "❌ المستخدم غير موجود"
     
-    # تحديث النشاط
     update_user(
         user_id,
         first_name=first_name,
@@ -357,7 +377,7 @@ def get_user_profile(user_id, first_name="", username=""):
     return profile
 
 # ======================
-# 🎯 الواجهة الرئيسية بدون أزرار كيبورد
+# 🎯 الواجهة الرئيسية
 # ======================
 
 @bot.message_handler(commands=['start', 'profile', 'الملف'])
@@ -372,7 +392,6 @@ def handle_start(message):
             message.from_user.username or ""
         )
         
-        # الأزرار الرئيسية (إنلاين فقط - بدون كيبورد)
         keyboard = InlineKeyboardMarkup(row_width=2)
         keyboard.add(
             InlineKeyboardButton("🎮 الألعاب", callback_data="games"),
@@ -602,7 +621,7 @@ def handle_vip_purchase(call):
 💰 الرصيد الحالي: {user['balance']:.1f} USDT
 📅 الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
         
-        for admin_id in ADMINS:
+        for admin_id in ADMIN_IDS:
             try:
                 bot.send_message(admin_id, request_text, parse_mode='Markdown')
             except Exception as e:
@@ -691,7 +710,7 @@ def show_withdrawal_options(message, user):
             msg = bot.send_message(
                 message.chat.id,
                 "💰 نظام السحب\n\n"
-                "📝 الرجاء إرسال عنوان محفظتك USDT (TRC20):"
+                "📝 الرجاء إرسال عنوان محفظة USDT (TRC20):"
             )
             bot.register_next_step_handler(msg, process_withdrawal_address, user)
             return
@@ -772,7 +791,7 @@ def process_withdrawal(call):
 👥 الإحالات الجديدة: {user.get('new_referrals', 0)}/15
 📅 الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
         
-        for admin_id in ADMINS:
+        for admin_id in ADMIN_IDS:
             try:
                 bot.send_message(admin_id, withdraw_text, parse_mode='Markdown')
             except Exception as e:
@@ -786,7 +805,7 @@ def process_withdrawal(call):
     except Exception as e:
         print(f"❌ خطأ في process_withdrawal: {e}")
 
-# 🔙 رجوع للبروفايل - معدل
+# 🔙 رجوع للبروفايل
 @bot.callback_query_handler(func=lambda call: call.data == "back_to_profile")
 def back_to_profile(call):
     try:
@@ -797,7 +816,6 @@ def back_to_profile(call):
             call.from_user.username or ""
         )
         
-        # الأزرار الرئيسية
         keyboard = InlineKeyboardMarkup(row_width=2)
         keyboard.add(
             InlineKeyboardButton("🎮 الألعاب", callback_data="games"),
@@ -855,13 +873,14 @@ def handle_referral_start(message):
         print(f"❌ خطأ في handle_referral_start: {e}")
 
 # ======================
-# 🛠️ الأوامر الإدارية (نفسها بدون تغيير)
+# 🛠️ الأوامر الإدارية - معدلة
 # ======================
 
 @bot.message_handler(commands=['quickadd'])
 def handle_quickadd(message):
     """💰 إضافة رصيد - للمشرفين فقط"""
     if not is_admin(message.from_user.id):
+        bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
         return
     
     try:
@@ -889,7 +908,429 @@ def handle_quickadd(message):
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ خطأ: {e}")
 
-# ... باقي الأوامر الإدارية تبقى نفسها ...
+@bot.message_handler(commands=['setbalance'])
+def handle_setbalance(message):
+    """💰 تعيين رصيد محدد - للمشرفين فقط"""
+    if not is_admin(message.from_user.id):
+        bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.send_message(message.chat.id, "📝 usage: /setbalance [user_id] [amount]")
+            return
+        
+        target_user_id = parts[1]
+        amount = float(parts[2])
+        
+        user = get_user(target_user_id)
+        if not user:
+            bot.send_message(message.chat.id, "❌ المستخدم غير موجود!")
+            return
+        
+        success = update_user(target_user_id, balance=amount)
+        
+        if success:
+            bot.send_message(message.chat.id, f"✅ تم تعيين رصيد المستخدم {target_user_id} إلى {amount} USDT")
+        else:
+            bot.send_message(message.chat.id, "❌ فشل في تعيين الرصيد!")
+            
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
+
+@bot.message_handler(commands=['setreferrals'])
+def handle_setreferrals(message):
+    """👥 تعيين عدد الإحالات - للمشرفين فقط"""
+    if not is_admin(message.from_user.id):
+        bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.send_message(message.chat.id, "📝 usage: /setreferrals [user_id] [count]")
+            return
+        
+        target_user_id = parts[1]
+        count = int(parts[2])
+        
+        user = get_user(target_user_id)
+        if not user:
+            bot.send_message(message.chat.id, "❌ المستخدم غير موجود!")
+            return
+        
+        success = update_user(target_user_id, referral_count=count, new_referrals=count)
+        
+        if success:
+            bot.send_message(message.chat.id, f"✅ تم تعيين إحالات المستخدم {target_user_id} إلى {count}")
+        else:
+            bot.send_message(message.chat.id, "❌ فشل في تعيين الإحالات!")
+            
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
+
+@bot.message_handler(commands=['addreferral'])
+def handle_addreferral(message):
+    """👥 إضافة إحالة واحدة - للمشرفين فقط"""
+    if not is_admin(message.from_user.id):
+        bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 2:
+            bot.send_message(message.chat.id, "📝 usage: /addreferral [user_id]")
+            return
+        
+        target_user_id = parts[1]
+        
+        user = get_user(target_user_id)
+        if not user:
+            bot.send_message(message.chat.id, "❌ المستخدم غير موجود!")
+            return
+        
+        new_count = user['referral_count'] + 1
+        new_refs = user['new_referrals'] + 1
+        success = update_user(target_user_id, referral_count=new_count, new_referrals=new_refs)
+        
+        if success:
+            bot.send_message(message.chat.id, f"✅ تم إضافة إحالة للمستخدم {target_user_id}")
+        else:
+            bot.send_message(message.chat.id, "❌ فشل في إضافة الإحالة!")
+            
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
+
+@bot.message_handler(commands=['setattempts'])
+def handle_setattempts(message):
+    """🎯 تعيين محاولات الألعاب - للمشرفين فقط"""
+    if not is_admin(message.from_user.id):
+        bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.send_message(message.chat.id, "📝 usage: /setattempts [user_id] [attempts]")
+            return
+        
+        target_user_id = parts[1]
+        attempts = int(parts[2])
+        
+        user = get_user(target_user_id)
+        if not user:
+            bot.send_message(message.chat.id, "❌ المستخدم غير موجود!")
+            return
+        
+        success = update_user(target_user_id, attempts=attempts)
+        
+        if success:
+            bot.send_message(message.chat.id, f"✅ تم تعيين محاولات المستخدم {target_user_id} إلى {attempts}")
+        else:
+            bot.send_message(message.chat.id, "❌ فشل في تعيين المحاولات!")
+            
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
+
+@bot.message_handler(commands=['resetattempts'])
+def handle_resetattempts(message):
+    """🎯 إعادة تعيين المحاولات - للمشرفين فقط"""
+    if not is_admin(message.from_user.id):
+        bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 2:
+            bot.send_message(message.chat.id, "📝 usage: /resetattempts [user_id]")
+            return
+        
+        target_user_id = parts[1]
+        
+        user = get_user(target_user_id)
+        if not user:
+            bot.send_message(message.chat.id, "❌ المستخدم غير موجود!")
+            return
+        
+        base_attempts = VIP_LEVELS[user['vip_level']]['max_attempts']
+        success = update_user(target_user_id, attempts=base_attempts, games_played_today=0)
+        
+        if success:
+            bot.send_message(message.chat.id, f"✅ تم إعادة تعيين محاولات المستخدم {target_user_id} إلى {base_attempts}")
+        else:
+            bot.send_message(message.chat.id, "❌ فشل في إعادة تعيين المحاولات!")
+            
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
+
+@bot.message_handler(commands=['addattempts'])
+def handle_addattempts(message):
+    """🎯 إضافة محاولات - للمشرفين فقط"""
+    if not is_admin(message.from_user.id):
+        bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.send_message(message.chat.id, "📝 usage: /addattempts [user_id] [count]")
+            return
+        
+        target_user_id = parts[1]
+        count = int(parts[2])
+        
+        user = get_user(target_user_id)
+        if not user:
+            bot.send_message(message.chat.id, "❌ المستخدم غير موجود!")
+            return
+        
+        new_attempts = user['attempts'] + count
+        success = update_user(target_user_id, attempts=new_attempts)
+        
+        if success:
+            bot.send_message(message.chat.id, f"✅ تم إضافة {count} محاولة للمستخدم {target_user_id}")
+        else:
+            bot.send_message(message.chat.id, "❌ فشل في إضافة المحاولات!")
+            
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
+
+@bot.message_handler(commands=['setdeposits'])
+def handle_setdeposits(message):
+    """💳 تعيين إجمالي الإيداعات - للمشرفين فقط"""
+    if not is_admin(message.from_user.id):
+        bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.send_message(message.chat.id, "📝 usage: /setdeposits [user_id] [amount]")
+            return
+        
+        target_user_id = parts[1]
+        amount = float(parts[2])
+        
+        user = get_user(target_user_id)
+        if not user:
+            bot.send_message(message.chat.id, "❌ المستخدم غير موجود!")
+            return
+        
+        success = update_user(target_user_id, total_deposits=amount)
+        
+        if success:
+            bot.send_message(message.chat.id, f"✅ تم تعيين إيداعات المستخدم {target_user_id} إلى {amount} USDT")
+        else:
+            bot.send_message(message.chat.id, "❌ فشل في تعيين الإيداعات!")
+            
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
+
+@bot.message_handler(commands=['adddeposit'])
+def handle_adddeposit(message):
+    """💳 إضافة إيداع - للمشرفين فقط"""
+    if not is_admin(message.from_user.id):
+        bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.send_message(message.chat.id, "📝 usage: /adddeposit [user_id] [amount]")
+            return
+        
+        target_user_id = parts[1]
+        amount = float(parts[2])
+        
+        user = get_user(target_user_id)
+        if not user:
+            bot.send_message(message.chat.id, "❌ المستخدم غير موجود!")
+            return
+        
+        new_deposits = user['total_deposits'] + amount
+        success = update_user(target_user_id, total_deposits=new_deposits)
+        
+        if success:
+            bot.send_message(message.chat.id, f"✅ تم إضافة إيداع {amount} USDT للمستخدم {target_user_id}")
+        else:
+            bot.send_message(message.chat.id, "❌ فشل في إضافة الإيداع!")
+            
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
+
+@bot.message_handler(commands=['userinfo'])
+def handle_userinfo(message):
+    """📊 معلومات كاملة عن المستخدم - للمشرفين فقط"""
+    if not is_admin(message.from_user.id):
+        bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 2:
+            bot.send_message(message.chat.id, "📝 usage: /userinfo [user_id]")
+            return
+        
+        target_user_id = parts[1]
+        user = get_user(target_user_id)
+        
+        if not user:
+            bot.send_message(message.chat.id, "❌ المستخدم غير موجود!")
+            return
+        
+        vip_info = VIP_LEVELS[user['vip_level']]
+        remaining_attempts, total_attempts, extra_attempts = get_remaining_attempts(user)
+        days_registered = get_days_since_registration(target_user_id)
+        
+        info_msg = f"👤 معلومات المستخدم:\n\n"
+        info_msg += f"🆔 المعرف: {user['user_id']}\n"
+        info_msg += f"👤 الاسم: {user['first_name'] or 'غير معروف'}\n"
+        info_msg += f"📛 اليوزر: @{user['username'] or 'لا يوجد'}\n"
+        info_msg += f"💰 الرصيد: {user['balance']:.2f} USDT\n"
+        info_msg += f"👥 الإحالات: {user['referral_count']}\n"
+        info_msg += f"📈 الإحالات الجديدة: {user['new_referrals']}/15\n"
+        info_msg += f"🏆 مستوى VIP: {vip_info['name']} (المستوى {user['vip_level']})\n"
+        info_msg += f"🎯 المحاولات: {user['attempts']} (متبقي: {remaining_attempts}/{total_attempts})\n"
+        info_msg += f"🎮 العاب اليوم: {user.get('games_played_today', 0)}\n"
+        info_msg += f"💎 إجمالي الأرباح: {user['total_earnings']:.2f} USDT\n"
+        info_msg += f"💳 إجمالي الإيداعات: {user['total_deposits']:.2f} USDT\n"
+        info_msg += f"📅 أيام التسجيل: {days_registered} يوم\n"
+        info_msg += f"📅 تاريخ التسجيل: {user['registration_date']}\n"
+        info_msg += f"🕒 آخر نشاط: {user['last_activity']}\n"
+        if user.get('withdrawal_address'):
+            info_msg += f"💳 عنوان السحب: {user['withdrawal_address']}\n"
+        
+        bot.send_message(message.chat.id, info_msg)
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
+
+@bot.message_handler(commands=['listusers'])
+def handle_listusers(message):
+    """📊 قائمة جميع المستخدمين - للمشرفين فقط"""
+    if not is_admin(message.from_user.id):
+        bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
+        return
+    
+    try:
+        conn = get_db_connection()
+        if not conn:
+            bot.send_message(message.chat.id, "❌ خطأ في قاعدة البيانات!")
+            return
+        
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) as total FROM users")
+        total_users = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT user_id, first_name, balance, vip_level, registration_date FROM users ORDER BY registration_date DESC LIMIT 20")
+        users = cursor.fetchall()
+        conn.close()
+        
+        if not users:
+            bot.send_message(message.chat.id, "❌ لا يوجد مستخدمين!")
+            return
+        
+        users_msg = f"👥 قائمة المستخدمين (آخر 20 من أصل {total_users}):\n\n"
+        
+        for i, user in enumerate(users, 1):
+            vip_name = VIP_LEVELS[user[3]]['name']
+            users_msg += f"{i}. {user[1] or 'غير معروف'} (ID: {user[0]})\n"
+            users_msg += f"   💰 {user[2]:.2f} USDT | {vip_name} | {user[4][:10]}\n\n"
+        
+        bot.send_message(message.chat.id, users_msg)
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
+
+@bot.message_handler(commands=['stats'])
+def handle_stats(message):
+    """📊 إحصائيات البوت - للمشرفين فقط"""
+    if not is_admin(message.from_user.id):
+        bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
+        return
+    
+    try:
+        conn = get_db_connection()
+        if not conn:
+            bot.send_message(message.chat.id, "❌ خطأ في قاعدة البيانات!")
+            return
+        
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT COUNT(*) as total_users FROM users")
+        total_users = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT SUM(balance) as total_balance FROM users")
+        total_balance = cursor.fetchone()[0] or 0
+        
+        cursor.execute("SELECT SUM(total_earnings) as total_earnings FROM users")
+        total_earnings = cursor.fetchone()[0] or 0
+        
+        cursor.execute("SELECT SUM(total_deposits) as total_deposits FROM users")
+        total_deposits = cursor.fetchone()[0] or 0
+        
+        cursor.execute("SELECT SUM(referral_count) as total_referrals FROM users")
+        total_referrals = cursor.fetchone()[0] or 0
+        
+        cursor.execute("SELECT vip_level, COUNT(*) as count FROM users GROUP BY vip_level")
+        vip_stats = cursor.fetchall()
+        
+        conn.close()
+        
+        stats_msg = "📊 إحصائيات البوت:\n\n"
+        stats_msg += f"👥 إجمالي المستخدمين: {total_users}\n"
+        stats_msg += f"💰 إجمالي الرصيد: {total_balance:.2f} USDT\n"
+        stats_msg += f"💎 إجمالي الأرباح: {total_earnings:.2f} USDT\n"
+        stats_msg += f"💳 إجمالي الإيداعات: {total_deposits:.2f} USDT\n"
+        stats_msg += f"👥 إجمالي الإحالات: {total_referrals}\n\n"
+        
+        stats_msg += "🏆 توزيع مستويات VIP:\n"
+        for level, count in vip_stats:
+            vip_name = VIP_LEVELS[level]['name']
+            stats_msg += f"{vip_name}: {count} مستخدم\n"
+        
+        bot.send_message(message.chat.id, stats_msg)
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
+
+@bot.message_handler(commands=['setvip'])
+def handle_setvip(message):
+    """💎 تعيين مستوى VIP - للمشرفين فقط"""
+    if not is_admin(message.from_user.id):
+        bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.send_message(message.chat.id, "📝 usage: /setvip [user_id] [level]\n\n0: مبتدئ\n1: برونز\n2: سيلفر\n3: جولد")
+            return
+        
+        target_user_id = parts[1]
+        vip_level = int(parts[2])
+        
+        if vip_level not in [0, 1, 2, 3]:
+            bot.send_message(message.chat.id, "❌ مستوى VIP غير صحيح!\n\n0: مبتدئ\n1: برونز\n2: سيلفر\n3: جولد")
+            return
+        
+        user = get_user(target_user_id)
+        if not user:
+            bot.send_message(message.chat.id, "❌ المستخدم غير موجود!")
+            return
+        
+        old_vip = VIP_LEVELS[user['vip_level']]['name']
+        success = update_user(target_user_id, vip_level=vip_level)
+        new_vip = VIP_LEVELS[vip_level]['name']
+        
+        if success:
+            bot.send_message(message.chat.id, f"✅ تم تعيين مستوى VIP للمستخدم {target_user_id}\n💎 السابق: {old_vip}\n💎 الجديد: {new_vip}")
+        else:
+            bot.send_message(message.chat.id, "❌ فشل في تعيين مستوى VIP!")
+            
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
 
 # ======================
 # 🔧 استمرارية البوت
@@ -907,6 +1348,30 @@ def health():
 
 def run_bot():
     print("🚀 جاري تشغيل البوت...")
+    
+    # 🧩 تنظيف الكاش القديم
+    def clean_old_cache():
+        while True:
+            try:
+                current_time = time.time()
+                keys_to_remove = []
+                for key, (data, timestamp) in user_cache.items():
+                    if current_time - timestamp > CACHE_TIMEOUT:
+                        keys_to_remove.append(key)
+                
+                for key in keys_to_remove:
+                    del user_cache[key]
+                
+                if keys_to_remove:
+                    print(f"🧹 تم تنظيف {len(keys_to_remove)} عنصر من الكاش")
+                
+                time.sleep(60)  # تنظيف كل دقيقة
+            except Exception as e:
+                print(f"❌ خطأ في تنظيف الكاش: {e}")
+    
+    # بدء تنظيف الكاش في thread منفصل
+    cache_cleaner = threading.Thread(target=clean_old_cache, daemon=True)
+    cache_cleaner.start()
     
     # تهيئة قاعدة البيانات
     if not init_database():
@@ -926,4 +1391,5 @@ def run_bot():
 
 if __name__ == "__main__":
     print("🎯 بدء التشغيل...")
+    print("🧠 نظام إدارة الذاكرة مفعل")
     run_bot()
