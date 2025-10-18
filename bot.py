@@ -29,8 +29,8 @@ if not BOT_TOKEN:
 # 🗄️ نظام SQLite معدل لـ Railway
 # ======================
 
-# استخدام مسار آمن لـ Railway
-DB_FILE = '/tmp/usdt_bot.db'
+# استخدام المسار الحالي بدلاً من /tmp
+DB_FILE = os.path.join(os.getcwd(), 'usdt_bot.db')
 db_lock = threading.Lock()
 
 def init_database():
@@ -38,23 +38,7 @@ def init_database():
     try:
         print(f"📁 محاولة إنشاء قاعدة بيانات في: {DB_FILE}")
         
-        # التأكد من وجود المجلد
-        db_dir = os.path.dirname(DB_FILE)
-        if not os.path.exists(db_dir):
-            try:
-                os.makedirs(db_dir, exist_ok=True)
-                print(f"✅ تم إنشاء المجلد: {db_dir}")
-            except Exception as e:
-                print(f"⚠️  لا يمكن إنشاء المجلد: {e}")
-                # استخدام المسار الحالي كبديل
-                temp_db_file = 'usdt_bot.db'
-                print(f"🔄 استخدام المسار البديل: {temp_db_file}")
-                # متابعة مع المسار البديل
-                conn = sqlite3.connect(temp_db_file, check_same_thread=False)
-        else:
-            # استخدام المسار الأصلي
-            conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-        
+        conn = sqlite3.connect(DB_FILE, check_same_thread=False)
         cursor = conn.cursor()
         
         # إنشاء الجدول
@@ -87,13 +71,7 @@ def get_db_connection():
         return conn
     except Exception as e:
         print(f"❌ فشل في الاتصال بقاعدة البيانات: {e}")
-        # محاولة الاتصال بالمسار البديل
-        try:
-            conn = sqlite3.connect('usdt_bot.db', check_same_thread=False, timeout=30)
-            conn.row_factory = sqlite3.Row
-            return conn
-        except:
-            return None
+        return None
 
 def get_user(user_id):
     """جلب أو إنشاء مستخدم"""
@@ -261,6 +239,33 @@ def handle_stats(message):
     except Exception as e:
         print(f"❌ خطأ في /stats: {e}")
         bot.send_message(message.chat.id, "💰 رصيدك: 0.75 USDT\n📊 النظام قيد التطوير...")
+
+@bot.message_handler(commands=['admin'])
+def handle_admin(message):
+    """أمر للمشرفين فقط"""
+    if str(message.from_user.id) not in ['ADMIN_USER_ID_HERE']:  # ضع ID المشرف هنا
+        return
+    
+    try:
+        conn = get_db_connection()
+        if conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) as count FROM users")
+            user_count = cursor.fetchone()['count']
+            
+            cursor.execute("SELECT SUM(balance) as total FROM users")
+            total_balance = cursor.fetchone()['total'] or 0
+            
+            conn.close()
+            
+            admin_msg = f"👑 إحصائيات المشرف:\n\n"
+            admin_msg += f"👥 عدد المستخدمين: {user_count}\n"
+            admin_msg += f"💰 إجمالي الرصيد: {total_balance:.2f} USDT\n"
+            admin_msg += f"📊 متوسط الرصيد: {total_balance/user_count:.2f} USDT" if user_count > 0 else "📊 متوسط الرصيد: 0"
+            
+            bot.send_message(message.chat.id, admin_msg)
+    except Exception as e:
+        print(f"❌ خطأ في /admin: {e}")
 
 @bot.message_handler(func=lambda message: True)
 def handle_all_messages(message):
