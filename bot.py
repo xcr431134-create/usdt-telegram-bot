@@ -47,12 +47,14 @@ def init_database():
             except Exception as e:
                 print(f"⚠️  لا يمكن إنشاء المجلد: {e}")
                 # استخدام المسار الحالي كبديل
-                global DB_FILE
-                DB_FILE = 'usdt_bot.db'
-                print(f"🔄 استخدام المسار البديل: {DB_FILE}")
+                temp_db_file = 'usdt_bot.db'
+                print(f"🔄 استخدام المسار البديل: {temp_db_file}")
+                # متابعة مع المسار البديل
+                conn = sqlite3.connect(temp_db_file, check_same_thread=False)
+        else:
+            # استخدام المسار الأصلي
+            conn = sqlite3.connect(DB_FILE, check_same_thread=False)
         
-        # إنشاء الاتصال بقاعدة البيانات
-        conn = sqlite3.connect(DB_FILE, check_same_thread=False)
         cursor = conn.cursor()
         
         # إنشاء الجدول
@@ -69,7 +71,7 @@ def init_database():
         
         conn.commit()
         conn.close()
-        print(f"✅ تم تهيئة قاعدة البيانات بنجاح في: {DB_FILE}")
+        print(f"✅ تم تهيئة قاعدة البيانات بنجاح")
         return True
         
     except Exception as e:
@@ -85,7 +87,13 @@ def get_db_connection():
         return conn
     except Exception as e:
         print(f"❌ فشل في الاتصال بقاعدة البيانات: {e}")
-        return None
+        # محاولة الاتصال بالمسار البديل
+        try:
+            conn = sqlite3.connect('usdt_bot.db', check_same_thread=False, timeout=30)
+            conn.row_factory = sqlite3.Row
+            return conn
+        except:
+            return None
 
 def get_user(user_id):
     """جلب أو إنشاء مستخدم"""
