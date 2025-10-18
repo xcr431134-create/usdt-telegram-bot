@@ -68,7 +68,20 @@ print("✅ تم إنشاء البوت بنجاح!")
 def get_db_connection():
     """إنشاء اتصال بقاعدة البيانات"""
     try:
-        conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+        # جرب استخدام DATABASE_URL أولاً
+        if DATABASE_URL:
+            conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+        else:
+            # إذا ما اشتغل، جرب المتغيرات المنفردة
+            conn = psycopg2.connect(
+                host=os.environ.get('PGHOST'),
+                port=os.environ.get('PGPORT', '5432'),
+                database=os.environ.get('PGDATABASE'),
+                user=os.environ.get('PGUSER'),
+                password=os.environ.get('PGPASSWORD'),
+                sslmode='require'
+            )
+        logger.info("✅ تم الاتصال بقاعدة البيانات بنجاح")
         return conn
     except Exception as e:
         logger.error(f"❌ فشل الاتصال بقاعدة البيانات: {e}")
