@@ -20,26 +20,42 @@ print("=" * 50)
 # فحص BOT_TOKEN
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 print(f"🔑 BOT_TOKEN موجود: {'✅ نعم' if BOT_TOKEN else '❌ لا'}")
-if BOT_TOKEN:
-    print(f"🔑 BOT_TOKEN: {BOT_TOKEN[:10]}...{BOT_TOKEN[-5:]}")
-else:
+
+if not BOT_TOKEN:
     print("❌ خطأ: BOT_TOKEN غير موجود في environment variables!")
-    print("💡 تأكد من إضافة BOT_TOKEN في Railway → Settings → Variables")
     exit(1)
 
 # ======================
-# 🗄️ نظام SQLite المبسط
+# 🗄️ نظام SQLite معدل لـ Railway
 # ======================
 
-DB_FILE = '/tmp/usdt_bot.db' if 'RAILWAY_ENVIRONMENT' in os.environ else 'usdt_bot.db'
+# استخدام مسار آمن لـ Railway
+DB_FILE = '/tmp/usdt_bot.db'
 db_lock = threading.Lock()
 
 def init_database():
-    """تهيئة قاعدة البيانات"""
+    """تهيئة قاعدة البيانات مع معالجة محسنة للصلاحيات"""
     try:
+        print(f"📁 محاولة إنشاء قاعدة بيانات في: {DB_FILE}")
+        
+        # التأكد من وجود المجلد
+        db_dir = os.path.dirname(DB_FILE)
+        if not os.path.exists(db_dir):
+            try:
+                os.makedirs(db_dir, exist_ok=True)
+                print(f"✅ تم إنشاء المجلد: {db_dir}")
+            except Exception as e:
+                print(f"⚠️  لا يمكن إنشاء المجلد: {e}")
+                # استخدام المسار الحالي كبديل
+                global DB_FILE
+                DB_FILE = 'usdt_bot.db'
+                print(f"🔄 استخدام المسار البديل: {DB_FILE}")
+        
+        # إنشاء الاتصال بقاعدة البيانات
         conn = sqlite3.connect(DB_FILE, check_same_thread=False)
         cursor = conn.cursor()
         
+        # إنشاء الجدول
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id TEXT PRIMARY KEY,
@@ -53,26 +69,39 @@ def init_database():
         
         conn.commit()
         conn.close()
-        print(f"✅ تم تهيئة قاعدة البيانات SQLite في: {DB_FILE}")
+        print(f"✅ تم تهيئة قاعدة البيانات بنجاح في: {DB_FILE}")
         return True
+        
     except Exception as e:
         print(f"❌ خطأ في تهيئة قاعدة البيانات: {e}")
+        print("🔄 المتابعة بدون قاعدة البيانات...")
         return False
+
+def get_db_connection():
+    """إنشاء اتصال آمن بقاعدة البيانات"""
+    try:
+        conn = sqlite3.connect(DB_FILE, check_same_thread=False, timeout=30)
+        conn.row_factory = sqlite3.Row
+        return conn
+    except Exception as e:
+        print(f"❌ فشل في الاتصال بقاعدة البيانات: {e}")
+        return None
 
 def get_user(user_id):
     """جلب أو إنشاء مستخدم"""
     with db_lock:
+        conn = None
         try:
-            conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-            conn.row_factory = sqlite3.Row
+            conn = get_db_connection()
+            if not conn:
+                return None
+                
             cursor = conn.cursor()
-            
             cursor.execute("SELECT * FROM users WHERE user_id = ?", (str(user_id),))
             user_data = cursor.fetchone()
             
             if user_data:
                 user_dict = dict(user_data)
-                conn.close()
                 return user_dict
             else:
                 # إنشاء مستخدم جديد
@@ -94,33 +123,56 @@ def get_user(user_id):
                 ))
                 
                 conn.commit()
-                conn.close()
                 print(f"✅ تم إنشاء مستخدم جديد: {user_id}")
                 return user_dict
                 
         except Exception as e:
             print(f"❌ خطأ في جلب بيانات المستخدم: {e}")
             return None
+        finally:
+            if conn:
+                conn.close()
 
 def update_user_activity(user_id, first_name="", username=""):
     """تحديث نشاط المستخدم"""
     with db_lock:
+        conn = None
         try:
-            conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+            conn = get_db_connection()
+            if not conn:
+                return False
+                
             cursor = conn.cursor()
             
-            cursor.execute("""
-                UPDATE users 
-                SET first_name = ?, username = ?, last_activity = ?, balance = balance + 0.1
-                WHERE user_id = ?
-            """, (first_name, username, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), str(user_id)))
+            # التحقق إذا المستخدم موجود
+            cursor.execute("SELECT * FROM users WHERE user_id = ?", (str(user_id),))
+            if cursor.fetchone():
+                # تحديث المستخدم الموجود
+                cursor.execute("""
+                    UPDATE users 
+                    SET first_name = ?, username = ?, last_activity = ?, balance = balance + 0.1
+                    WHERE user_id = ?
+                """, (first_name, username, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), str(user_id)))
+            else:
+                # إنشاء مستخدم جديد
+                cursor.execute("""
+                    INSERT INTO users (user_id, username, first_name, balance, registration_date, last_activity)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    str(user_id), username, first_name, 0.75,
+                    datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                ))
             
             conn.commit()
-            conn.close()
             return True
+            
         except Exception as e:
             print(f"❌ خطأ في تحديث نشاط المستخدم: {e}")
             return False
+        finally:
+            if conn:
+                conn.close()
 
 def get_user_stats(user_id):
     """جلب إحصائيات المستخدم"""
@@ -140,10 +192,6 @@ try:
 except Exception as e:
     print(f"❌ فشل في إنشاء البوت: {e}")
     exit(1)
-
-# تهيئة قاعدة البيانات
-if not init_database():
-    print("⚠️  تم المتابعة بدون قاعدة البيانات")
 
 app = Flask(__name__)
 
@@ -166,23 +214,29 @@ def handle_start(message):
     
     try:
         # تحديث بيانات المستخدم
-        update_user_activity(
+        success = update_user_activity(
             message.from_user.id,
             message.from_user.first_name,
             message.from_user.username or ""
         )
         
-        # جلب بيانات المستخدم
-        user_stats = get_user_stats(message.from_user.id)
-        
-        response = f"مرحباً {message.from_user.first_name}! 👋\n\n"
-        response += "🎯 نظام USDT الجديد\n\n"
-        response += f"{user_stats}\n\n"
-        response += "💎 المزايا:\n"
-        response += "• رصيد بداية: 0.75 USDT\n"
-        response += "• مكافأة نشاط: 0.10 USDT\n"
-        response += "• ألعاب ربحية قريباً\n\n"
-        response += "📊 للإحصائيات: /stats"
+        if success:
+            user_stats = get_user_stats(message.from_user.id)
+            
+            response = f"مرحباً {message.from_user.first_name}! 👋\n\n"
+            response += "🎯 نظام USDT الجديد\n\n"
+            response += f"{user_stats}\n\n"
+            response += "💎 المزايا:\n"
+            response += "• رصيد بداية: 0.75 USDT\n"
+            response += "• مكافأة نشاط: 0.10 USDT\n"
+            response += "• ألعاب ربحية قريباً\n\n"
+            response += "📊 للإحصائيات: /stats"
+        else:
+            response = f"مرحباً {message.from_user.first_name}! 👋\n\n"
+            response += "🎯 نظام USDT الجديد\n\n"
+            response += "💰 رصيدك: 0.75 USDT\n"
+            response += "📅 وقت التسجيل: الآن\n\n"
+            response += "💎 نظام التخزين قيد التطوير..."
         
         bot.send_message(message.chat.id, response)
         print(f"✅ تم الرد على {user_info}")
@@ -191,30 +245,19 @@ def handle_start(message):
         print(f"❌ فشل في معالجة /start: {e}")
         bot.send_message(message.chat.id, "❌ حدث خطأ، يرجى المحاولة لاحقاً")
 
-@bot.message_handler(commands=['stats'])
+@bot.message_handler(commands=['stats', 'balance'])
 def handle_stats(message):
     try:
         user_stats = get_user_stats(message.from_user.id)
         bot.send_message(message.chat.id, f"📊 إحصائياتك:\n\n{user_stats}")
     except Exception as e:
         print(f"❌ خطأ في /stats: {e}")
+        bot.send_message(message.chat.id, "💰 رصيدك: 0.75 USDT\n📊 النظام قيد التطوير...")
 
-@bot.message_handler(commands=['balance'])
-def handle_balance(message):
-    try:
-        user = get_user(message.from_user.id)
-        if user:
-            bot.send_message(message.chat.id, f"💰 رصيدك: {user['balance']:.2f} USDT")
-        else:
-            bot.send_message(message.chat.id, "❌ لا توجد بيانات")
-    except Exception as e:
-        print(f"❌ خطأ في /balance: {e}")
-
-# معالجة الرسائل العادية
 @bot.message_handler(func=lambda message: True)
 def handle_all_messages(message):
     if message.text.startswith('/'):
-        return  # تجاهل الأوامر الأخرى
+        return
         
     user_info = f"{message.from_user.first_name} (ID: {message.from_user.id})"
     print(f"📩 رسالة عادية من {user_info}: {message.text}")
@@ -227,6 +270,11 @@ def handle_all_messages(message):
 
 def run_bot():
     print("🚀 جاري تشغيل البوت...")
+    
+    # تهيئة قاعدة البيانات
+    if not init_database():
+        print("⚠️  تم المتابعة بدون قاعدة البيانات")
+    
     try:
         bot.polling(
             none_stop=True,
