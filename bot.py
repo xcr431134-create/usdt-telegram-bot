@@ -9,9 +9,10 @@ import time
 import requests
 from flask import Flask
 import logging
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import pg8000
+from pg8000.native import Connection
 import sys
+import re
 
 # ✅ تمكين السجلات المفصلة
 logging.basicConfig(
@@ -62,7 +63,7 @@ bot = telebot.TeleBot(BOT_TOKEN)
 print("✅ تم إنشاء البوت بنجاح!")
 
 # ======================
-# 🗄️ نظام قاعدة البيانات PostgreSQL
+# 🗄️ نظام قاعدة البيانات PostgreSQL مع pg8000
 # ======================
 
 def get_db_connection():
@@ -70,8 +71,23 @@ def get_db_connection():
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            conn = psycopg2.connect(DATABASE_URL, sslmode='require')
-            return conn
+            # استخراج معلومات الاتصال من DATABASE_URL
+            match = re.match(r'postgresql://([^:]+):([^@]+)@([^:]+):(\d+)/(.+)', DATABASE_URL)
+            if match:
+                user, password, host, port, database = match.groups()
+                conn = Connection(
+                    user=user,
+                    password=password,
+                    host=host,
+                    port=int(port),
+                    database=database,
+                    ssl_context=True
+                )
+                print("✅ تم الاتصال بقاعدة البيانات بنجاح!")
+                return conn
+            else:
+                logger.error("❌ خطأ في تحليل DATABASE_URL")
+                return None
         except Exception as e:
             logger.error(f"❌ فشل الاتصال بقاعدة البيانات (المحاولة {attempt + 1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
@@ -86,33 +102,31 @@ def init_database():
         if not conn:
             return False
             
-        with conn.cursor() as cur:
-            # جدول المستخدمين
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id TEXT PRIMARY KEY,
-                    username TEXT,
-                    first_name TEXT,
-                    balance REAL DEFAULT 0.75,
-                    referrals_count INTEGER DEFAULT 0,
-                    referrals_new INTEGER DEFAULT 0,
-                    games_played_today INTEGER DEFAULT 0,
-                    total_games_played INTEGER DEFAULT 0,
-                    total_earned REAL DEFAULT 0.75,
-                    total_deposits REAL DEFAULT 0.0,
-                    vip_level INTEGER DEFAULT 0,
-                    registration_date TEXT,
-                    last_activity TEXT,
-                    last_reset_date TEXT,
-                    withdrawal_address TEXT,
-                    registration_days INTEGER DEFAULT 0,
-                    last_daily_check TEXT
-                )
-            """)
-            
-            conn.commit()
-            print("✅ تم تهيئة قاعدة البيانات بنجاح!")
-            return True
+        # جدول المستخدمين
+        conn.run("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id TEXT PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                balance REAL DEFAULT 0.75,
+                referrals_count INTEGER DEFAULT 0,
+                referrals_new INTEGER DEFAULT 0,
+                games_played_today INTEGER DEFAULT 0,
+                total_games_played INTEGER DEFAULT 0,
+                total_earned REAL DEFAULT 0.75,
+                total_deposits REAL DEFAULT 0.0,
+                vip_level INTEGER DEFAULT 0,
+                registration_date TEXT,
+                last_activity TEXT,
+                last_reset_date TEXT,
+                withdrawal_address TEXT,
+                registration_days INTEGER DEFAULT 0,
+                last_daily_check TEXT
+            )
+        """)
+        
+        print("✅ تم تهيئة قاعدة البيانات بنجاح!")
+        return True
             
     except Exception as e:
         logger.error(f"❌ خطأ في تهيئة قاعدة البيانات: {e}")
@@ -128,39 +142,58 @@ def get_user(user_id):
         if not conn:
             return create_default_user(user_id)
             
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM users WHERE user_id = %s", (str(user_id),))
-            user_data = cur.fetchone()
+        # تنفيذ الاستعلام
+        conn.run("SELECT * FROM users WHERE user_id = :user_id", user_id=str(user_id))
+        row = conn.rows[0] if conn.rows else None
+        
+        if row:
+            # تحويل الصف إلى dictionary
+            user_dict = {
+                'user_id': row[0],
+                'username': row[1] or "",
+                'first_name': row[2] or "",
+                'balance': float(row[3]),
+                'referrals_count': row[4],
+                'referrals_new': row[5],
+                'games_played_today': row[6],
+                'total_games_played': row[7],
+                'total_earned': float(row[8]),
+                'total_deposits': float(row[9]),
+                'vip_level': row[10],
+                'registration_date': row[11] or "",
+                'last_activity': row[12] or "",
+                'last_reset_date': row[13] or "",
+                'withdrawal_address': row[14] or "",
+                'registration_days': row[15],
+                'last_daily_check': row[16] or ""
+            }
             
-            if user_data:
-                user_dict = dict(user_data)
+            # التحقق من إعادة تعيين المحاولات اليومية
+            last_reset = user_dict.get('last_reset_date', '2000-01-01')
+            today = datetime.now().strftime('%Y-%m-%d')
+            
+            if last_reset != today:
+                user_dict['games_played_today'] = 0
+                user_dict['last_reset_date'] = today
                 
-                # التحقق من إعادة تعيين المحاولات اليومية
-                last_reset = user_dict.get('last_reset_date', '2000-01-01')
-                today = datetime.now().strftime('%Y-%m-%d')
+                # منح المكافأة اليومية
+                daily_bonus = 0.75
+                user_dict['balance'] += daily_bonus
+                user_dict['total_earned'] += daily_bonus
                 
-                if last_reset != today:
-                    user_dict['games_played_today'] = 0
-                    user_dict['last_reset_date'] = today
-                    
-                    # منح المكافأة اليومية
-                    daily_bonus = 0.75
-                    user_dict['balance'] += daily_bonus
-                    user_dict['total_earned'] += daily_bonus
-                    
-                    # منح مكافأة VIP
-                    vip_bonus = {1: 0.5, 2: 1.0, 3: 2.0}
-                    if user_dict['vip_level'] in vip_bonus:
-                        bonus = vip_bonus[user_dict['vip_level']]
-                        user_dict['balance'] += bonus
-                        user_dict['total_earned'] += bonus
-                    
-                    # تحديث البيانات في قاعدة البيانات
-                    update_user(user_dict)
+                # منح مكافأة VIP
+                vip_bonus = {1: 0.5, 2: 1.0, 3: 2.0}
+                if user_dict['vip_level'] in vip_bonus:
+                    bonus = vip_bonus[user_dict['vip_level']]
+                    user_dict['balance'] += bonus
+                    user_dict['total_earned'] += bonus
                 
-                return user_dict
-            else:
-                return create_default_user(user_id)
+                # تحديث البيانات في قاعدة البيانات
+                update_user(user_dict)
+            
+            return user_dict
+        else:
+            return create_default_user(user_id)
                 
     except Exception as e:
         logger.error(f"❌ خطأ في جلب بيانات المستخدم {user_id}: {e}")
@@ -201,44 +234,55 @@ def save_user(user_data):
         if not conn:
             return False
             
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO users (
-                    user_id, username, first_name, balance, referrals_count, referrals_new,
-                    games_played_today, total_games_played, total_earned, total_deposits,
-                    vip_level, registration_date, last_activity, last_reset_date,
-                    withdrawal_address, registration_days, last_daily_check
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-                )
-                ON CONFLICT (user_id) DO UPDATE SET
-                    username = EXCLUDED.username,
-                    first_name = EXCLUDED.first_name,
-                    balance = EXCLUDED.balance,
-                    referrals_count = EXCLUDED.referrals_count,
-                    referrals_new = EXCLUDED.referrals_new,
-                    games_played_today = EXCLUDED.games_played_today,
-                    total_games_played = EXCLUDED.total_games_played,
-                    total_earned = EXCLUDED.total_earned,
-                    total_deposits = EXCLUDED.total_deposits,
-                    vip_level = EXCLUDED.vip_level,
-                    last_activity = EXCLUDED.last_activity,
-                    last_reset_date = EXCLUDED.last_reset_date,
-                    withdrawal_address = EXCLUDED.withdrawal_address,
-                    registration_days = EXCLUDED.registration_days,
-                    last_daily_check = EXCLUDED.last_daily_check
-            """, (
-                user_data['user_id'], user_data['username'], user_data['first_name'],
-                user_data['balance'], user_data['referrals_count'], user_data['referrals_new'],
-                user_data['games_played_today'], user_data['total_games_played'],
-                user_data['total_earned'], user_data['total_deposits'], user_data['vip_level'],
-                user_data['registration_date'], user_data['last_activity'],
-                user_data['last_reset_date'], user_data['withdrawal_address'],
-                user_data['registration_days'], user_data['last_daily_check']
-            ))
-            
-            conn.commit()
-            return True
+        conn.run("""
+            INSERT INTO users (
+                user_id, username, first_name, balance, referrals_count, referrals_new,
+                games_played_today, total_games_played, total_earned, total_deposits,
+                vip_level, registration_date, last_activity, last_reset_date,
+                withdrawal_address, registration_days, last_daily_check
+            ) VALUES (
+                :user_id, :username, :first_name, :balance, :referrals_count, :referrals_new,
+                :games_played_today, :total_games_played, :total_earned, :total_deposits,
+                :vip_level, :registration_date, :last_activity, :last_reset_date,
+                :withdrawal_address, :registration_days, :last_daily_check
+            )
+            ON CONFLICT (user_id) DO UPDATE SET
+                username = EXCLUDED.username,
+                first_name = EXCLUDED.first_name,
+                balance = EXCLUDED.balance,
+                referrals_count = EXCLUDED.referrals_count,
+                referrals_new = EXCLUDED.referrals_new,
+                games_played_today = EXCLUDED.games_played_today,
+                total_games_played = EXCLUDED.total_games_played,
+                total_earned = EXCLUDED.total_earned,
+                total_deposits = EXCLUDED.total_deposits,
+                vip_level = EXCLUDED.vip_level,
+                last_activity = EXCLUDED.last_activity,
+                last_reset_date = EXCLUDED.last_reset_date,
+                withdrawal_address = EXCLUDED.withdrawal_address,
+                registration_days = EXCLUDED.registration_days,
+                last_daily_check = EXCLUDED.last_daily_check
+        """, 
+            user_id=user_data['user_id'],
+            username=user_data['username'],
+            first_name=user_data['first_name'],
+            balance=user_data['balance'],
+            referrals_count=user_data['referrals_count'],
+            referrals_new=user_data['referrals_new'],
+            games_played_today=user_data['games_played_today'],
+            total_games_played=user_data['total_games_played'],
+            total_earned=user_data['total_earned'],
+            total_deposits=user_data['total_deposits'],
+            vip_level=user_data['vip_level'],
+            registration_date=user_data['registration_date'],
+            last_activity=user_data['last_activity'],
+            last_reset_date=user_data['last_reset_date'],
+            withdrawal_address=user_data['withdrawal_address'],
+            registration_days=user_data['registration_days'],
+            last_daily_check=user_data['last_daily_check']
+        )
+        
+        return True
             
     except Exception as e:
         logger.error(f"❌ خطأ في حفظ بيانات المستخدم {user_data['user_id']}: {e}")
@@ -299,7 +343,7 @@ def can_withdraw(user):
     has_10_days = user.get('registration_days', 0) >= 10
     has_150_balance = user['balance'] >= 150
     has_address = bool(user.get('withdrawal_address', ''))
-    has_15_new_refs = user.get('referrals_new', 0) >= 15  # ⭐ الشرط الجديد
+    has_15_new_refs = user.get('referrals_new', 0) >= 15
     
     return has_10_days and has_150_balance and has_address and has_15_new_refs
 
@@ -578,7 +622,7 @@ def handle_withdraw(call):
                 error_msg = f"❌ الحد الأدنى للسحب هو 150 USDT\n💰 رصيدك الحالي: {user['balance']:.1f} USDT"
             elif not user.get('withdrawal_address'):
                 error_msg = "❌ يرجى إعداد عنوان المحفظة أولاً"
-            elif user.get('referrals_new', 0) < 15:  # ⭐ الرسالة الجديدة
+            elif user.get('referrals_new', 0) < 15:
                 error_msg = f"❌ تحتاج إلى 15 إحالة جديدة على الأقل للسحب\n👥 إحالاتك الجديدة: {user.get('referrals_new', 0)}/15"
             else:
                 error_msg = "❌ لا يمكن السحب حالياً، يرجى المحاولة لاحقاً"
@@ -1027,32 +1071,32 @@ def stats(message):
             bot.reply_to(message, "❌ لا يمكن الاتصال بقاعدة البيانات")
             return
             
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT COUNT(*) as total_users FROM users")
-            total_users = cur.fetchone()['total_users']
-            
-            cur.execute("SELECT COUNT(*) as active_users FROM users WHERE balance > 0 OR games_played_today > 0")
-            active_users = cur.fetchone()['active_users']
-            
-            cur.execute("SELECT SUM(balance) as total_balance FROM users")
-            total_balance_result = cur.fetchone()['total_balance']
-            total_balance = total_balance_result if total_balance_result else 0
-            
-            cur.execute("SELECT SUM(referrals_count) as total_referrals FROM users")
-            total_referrals_result = cur.fetchone()['total_referrals']
-            total_referrals = total_referrals_result if total_referrals_result else 0
-            
-            cur.execute("SELECT SUM(total_deposits) as total_deposits FROM users")
-            total_deposits_result = cur.fetchone()['total_deposits']
-            total_deposits = total_deposits_result if total_deposits_result else 0
-            
-            cur.execute("SELECT COUNT(*) as today_players FROM users WHERE games_played_today > 0")
-            today_players = cur.fetchone()['today_players']
-            
-            cur.execute("SELECT vip_level, COUNT(*) as count FROM users GROUP BY vip_level")
-            vip_counts = {0: 0, 1: 0, 2: 0, 3: 0}
-            for row in cur.fetchall():
-                vip_counts[row['vip_level']] = row['count']
+        # إحصائيات المستخدمين
+        conn.run("SELECT COUNT(*) as total_users FROM users")
+        total_users = conn.rows[0][0]
+        
+        conn.run("SELECT COUNT(*) as active_users FROM users WHERE balance > 0 OR games_played_today > 0")
+        active_users = conn.rows[0][0]
+        
+        conn.run("SELECT SUM(balance) as total_balance FROM users")
+        total_balance_result = conn.rows[0][0]
+        total_balance = float(total_balance_result) if total_balance_result else 0
+        
+        conn.run("SELECT SUM(referrals_count) as total_referrals FROM users")
+        total_referrals_result = conn.rows[0][0]
+        total_referrals = total_referrals_result if total_referrals_result else 0
+        
+        conn.run("SELECT SUM(total_deposits) as total_deposits FROM users")
+        total_deposits_result = conn.rows[0][0]
+        total_deposits = float(total_deposits_result) if total_deposits_result else 0
+        
+        conn.run("SELECT COUNT(*) as today_players FROM users WHERE games_played_today > 0")
+        today_players = conn.rows[0][0]
+        
+        conn.run("SELECT vip_level, COUNT(*) as count FROM users GROUP BY vip_level")
+        vip_counts = {0: 0, 1: 0, 2: 0, 3: 0}
+        for row in conn.rows:
+            vip_counts[row[0]] = row[1]
         
         stats_text = f"""
 📈 إحصائيات البوت:
