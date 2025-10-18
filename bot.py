@@ -10,9 +10,7 @@ import requests
 from flask import Flask
 import logging
 import pg8000
-from pg8000.native import Connection
 import sys
-import re
 
 # ✅ تمكين السجلات المفصلة
 logging.basicConfig(
@@ -40,23 +38,21 @@ def ping():
 
 # 🔧 الإعدادات من environment variables
 print("🔍 جاري تحميل الإعدادات...")
-BOT_TOKEN = os.environ.get('BOT_TOKEN')
-DATABASE_URL = os.environ.get('DATABASE_URL')
+BOT_TOKEN = "7973697789:AAFXfYXTgYaTAF1j7IGhp2kiv-kxrN1uImk"
+DATABASE_URL = "postgresql://bot_user:k6xr1HgqhKV4l1B5lpWnxPKxgFFHe5OC@dpg-d3peu8ggjchc73ah3nc0-a.oregon-postgres.render.com/bot_database_sf0a"
 
 if not BOT_TOKEN:
-    print("❌ خطأ: BOT_TOKEN غير موجود في environment variables!")
-    print("💡 الرجاء إضافة BOT_TOKEN في إعدادات Render")
+    print("❌ خطأ: BOT_TOKEN غير موجود!")
     exit(1)
 
 if not DATABASE_URL:
-    print("❌ خطأ: DATABASE_URL غير موجود في environment variables!")
-    print("💡 الرجاء إضافة DATABASE_URL في إعدادات Render")
+    print("❌ خطأ: DATABASE_URL غير موجود!")
     exit(1)
 
 print(f"✅ تم تحميل BOT_TOKEN: {BOT_TOKEN[:10]}...")
 print(f"✅ تم تحميل DATABASE_URL: {DATABASE_URL[:30]}...")
 
-ADMIN_IDS = [int(os.getenv('ADMIN_ID', '8400225549'))]
+ADMIN_IDS = [8400225549]
 
 print("🤖 جاري إنشاء البوت...")
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -71,23 +67,13 @@ def get_db_connection():
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            # استخراج معلومات الاتصال من DATABASE_URL
-            match = re.match(r'postgresql://([^:]+):([^@]+)@([^:]+):(\d+)/(.+)', DATABASE_URL)
-            if match:
-                user, password, host, port, database = match.groups()
-                conn = Connection(
-                    user=user,
-                    password=password,
-                    host=host,
-                    port=int(port),
-                    database=database,
-                    ssl_context=True
-                )
-                print("✅ تم الاتصال بقاعدة البيانات بنجاح!")
-                return conn
-            else:
-                logger.error("❌ خطأ في تحليل DATABASE_URL")
-                return None
+            # طريقة مبسطة للاتصال - تعمل مباشرة مع DATABASE_URL
+            conn = pg8000.connect(
+                dsn=DATABASE_URL,
+                ssl_context=True
+            )
+            print("✅ تم الاتصال بقاعدة البيانات بنجاح!")
+            return conn
         except Exception as e:
             logger.error(f"❌ فشل الاتصال بقاعدة البيانات (المحاولة {attempt + 1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
@@ -103,7 +89,8 @@ def init_database():
             return False
             
         # جدول المستخدمين
-        conn.run("""
+        cursor = conn.cursor()
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id TEXT PRIMARY KEY,
                 username TEXT,
@@ -125,6 +112,8 @@ def init_database():
             )
         """)
         
+        conn.commit()
+        cursor.close()
         print("✅ تم تهيئة قاعدة البيانات بنجاح!")
         return True
             
@@ -142,9 +131,9 @@ def get_user(user_id):
         if not conn:
             return create_default_user(user_id)
             
-        # تنفيذ الاستعلام
-        conn.run("SELECT * FROM users WHERE user_id = :user_id", user_id=str(user_id))
-        row = conn.rows[0] if conn.rows else None
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE user_id = %s", (str(user_id),))
+        row = cursor.fetchone()
         
         if row:
             # تحويل الصف إلى dictionary
@@ -191,8 +180,10 @@ def get_user(user_id):
                 # تحديث البيانات في قاعدة البيانات
                 update_user(user_dict)
             
+            cursor.close()
             return user_dict
         else:
+            cursor.close()
             return create_default_user(user_id)
                 
     except Exception as e:
@@ -234,17 +225,15 @@ def save_user(user_data):
         if not conn:
             return False
             
-        conn.run("""
+        cursor = conn.cursor()
+        cursor.execute("""
             INSERT INTO users (
                 user_id, username, first_name, balance, referrals_count, referrals_new,
                 games_played_today, total_games_played, total_earned, total_deposits,
                 vip_level, registration_date, last_activity, last_reset_date,
                 withdrawal_address, registration_days, last_daily_check
             ) VALUES (
-                :user_id, :username, :first_name, :balance, :referrals_count, :referrals_new,
-                :games_played_today, :total_games_played, :total_earned, :total_deposits,
-                :vip_level, :registration_date, :last_activity, :last_reset_date,
-                :withdrawal_address, :registration_days, :last_daily_check
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             ON CONFLICT (user_id) DO UPDATE SET
                 username = EXCLUDED.username,
@@ -262,26 +251,18 @@ def save_user(user_data):
                 withdrawal_address = EXCLUDED.withdrawal_address,
                 registration_days = EXCLUDED.registration_days,
                 last_daily_check = EXCLUDED.last_daily_check
-        """, 
-            user_id=user_data['user_id'],
-            username=user_data['username'],
-            first_name=user_data['first_name'],
-            balance=user_data['balance'],
-            referrals_count=user_data['referrals_count'],
-            referrals_new=user_data['referrals_new'],
-            games_played_today=user_data['games_played_today'],
-            total_games_played=user_data['total_games_played'],
-            total_earned=user_data['total_earned'],
-            total_deposits=user_data['total_deposits'],
-            vip_level=user_data['vip_level'],
-            registration_date=user_data['registration_date'],
-            last_activity=user_data['last_activity'],
-            last_reset_date=user_data['last_reset_date'],
-            withdrawal_address=user_data['withdrawal_address'],
-            registration_days=user_data['registration_days'],
-            last_daily_check=user_data['last_daily_check']
-        )
+        """, (
+            user_data['user_id'], user_data['username'], user_data['first_name'],
+            user_data['balance'], user_data['referrals_count'], user_data['referrals_new'],
+            user_data['games_played_today'], user_data['total_games_played'],
+            user_data['total_earned'], user_data['total_deposits'], user_data['vip_level'],
+            user_data['registration_date'], user_data['last_activity'],
+            user_data['last_reset_date'], user_data['withdrawal_address'],
+            user_data['registration_days'], user_data['last_daily_check']
+        ))
         
+        conn.commit()
+        cursor.close()
         return True
             
     except Exception as e:
@@ -1071,32 +1052,37 @@ def stats(message):
             bot.reply_to(message, "❌ لا يمكن الاتصال بقاعدة البيانات")
             return
             
+        cursor = conn.cursor()
+        
         # إحصائيات المستخدمين
-        conn.run("SELECT COUNT(*) as total_users FROM users")
-        total_users = conn.rows[0][0]
+        cursor.execute("SELECT COUNT(*) as total_users FROM users")
+        total_users = cursor.fetchone()[0]
         
-        conn.run("SELECT COUNT(*) as active_users FROM users WHERE balance > 0 OR games_played_today > 0")
-        active_users = conn.rows[0][0]
+        cursor.execute("SELECT COUNT(*) as active_users FROM users WHERE balance > 0 OR games_played_today > 0")
+        active_users = cursor.fetchone()[0]
         
-        conn.run("SELECT SUM(balance) as total_balance FROM users")
-        total_balance_result = conn.rows[0][0]
+        cursor.execute("SELECT SUM(balance) as total_balance FROM users")
+        total_balance_result = cursor.fetchone()[0]
         total_balance = float(total_balance_result) if total_balance_result else 0
         
-        conn.run("SELECT SUM(referrals_count) as total_referrals FROM users")
-        total_referrals_result = conn.rows[0][0]
+        cursor.execute("SELECT SUM(referrals_count) as total_referrals FROM users")
+        total_referrals_result = cursor.fetchone()[0]
         total_referrals = total_referrals_result if total_referrals_result else 0
         
-        conn.run("SELECT SUM(total_deposits) as total_deposits FROM users")
-        total_deposits_result = conn.rows[0][0]
+        cursor.execute("SELECT SUM(total_deposits) as total_deposits FROM users")
+        total_deposits_result = cursor.fetchone()[0]
         total_deposits = float(total_deposits_result) if total_deposits_result else 0
         
-        conn.run("SELECT COUNT(*) as today_players FROM users WHERE games_played_today > 0")
-        today_players = conn.rows[0][0]
+        cursor.execute("SELECT COUNT(*) as today_players FROM users WHERE games_played_today > 0")
+        today_players = cursor.fetchone()[0]
         
-        conn.run("SELECT vip_level, COUNT(*) as count FROM users GROUP BY vip_level")
+        cursor.execute("SELECT vip_level, COUNT(*) as count FROM users GROUP BY vip_level")
         vip_counts = {0: 0, 1: 0, 2: 0, 3: 0}
-        for row in conn.rows:
+        for row in cursor.fetchall():
             vip_counts[row[0]] = row[1]
+        
+        cursor.close()
+        conn.close()
         
         stats_text = f"""
 📈 إحصائيات البوت:
@@ -1118,9 +1104,6 @@ def stats(message):
         
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ: {e}")
-    finally:
-        if conn:
-            conn.close()
 
 # ======================
 # 🚀 تشغيل النظام المحسن مع إصلاح التوقف
@@ -1194,7 +1177,7 @@ def keep_alive():
     while True:
         try:
             # إرسال طلب health check كل 5 دقائق
-            requests.get('https://your-bot-name.onrender.com/health', timeout=10)
+            requests.get('https://usdt-mini1-bot.onrender.com/health', timeout=10)
             print("✅ Keep-alive request sent")
             time.sleep(300)  # 5 دقائق
         except Exception as e:
