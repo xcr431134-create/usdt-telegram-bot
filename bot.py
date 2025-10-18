@@ -1,6 +1,6 @@
 import os
 import telebot
-import json
+import sqlite3
 import random
 import threading
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -9,8 +9,6 @@ import time
 import requests
 from flask import Flask
 import logging
-import psycopg2
-from psycopg2.extras import RealDictCursor
 import sys
 
 # ✅ تمكين السجلات المفصلة
@@ -55,43 +53,20 @@ bot = telebot.TeleBot(BOT_TOKEN)
 print("✅ تم إنشاء البوت بنجاح!")
 
 # ======================
-# 🗄️ نظام قاعدة البيانات PostgreSQL
+# 🗄️ نظام قاعدة البيانات SQLite
 # ======================
 
-def get_db_connection():
-    """إنشاء اتصال بقاعدة البيانات"""
-    try:
-        # استخدام DATABASE_URL إذا كان متوفراً (لـ Railway)
-        database_url = os.environ.get('DATABASE_URL')
-        if database_url:
-            conn = psycopg2.connect(database_url, sslmode='require')
-        else:
-            # استخدام المتغيرات المنفردة
-            conn = psycopg2.connect(
-                host=os.environ.get('PGHOST', 'localhost'),
-                port=os.environ.get('PGPORT', '5432'),
-                database=os.environ.get('PGDATABASE', 'railway'),
-                user=os.environ.get('PGUSER', 'postgres'),
-                password=os.environ.get('PGPASSWORD', ''),
-                sslmode='require'
-            )
-        logger.info("✅ تم الاتصال بقاعدة البيانات بنجاح")
-        return conn
-    except Exception as e:
-        logger.error(f"❌ فشل الاتصال بقاعدة البيانات: {e}")
-        return None
+DB_FILE = 'usdt_bot.db'
+db_lock = threading.Lock()
 
 def init_database():
-    """تهيئة الجداول في قاعدة البيانات"""
-    conn = None
-    try:
-        conn = get_db_connection()
-        if not conn:
-            return False
+    """تهيئة قاعدة البيانات"""
+    with db_lock:
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
             
-        with conn.cursor() as cur:
-            # جدول المستخدمين
-            cur.execute("""
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     user_id TEXT PRIMARY KEY,
                     username TEXT,
@@ -114,27 +89,23 @@ def init_database():
             """)
             
             conn.commit()
-            print("✅ تم تهيئة قاعدة البيانات بنجاح!")
-            return True
-            
-    except Exception as e:
-        logger.error(f"❌ خطأ في تهيئة قاعدة البيانات: {e}")
-        return False
-    finally:
-        if conn:
             conn.close()
+            print("✅ تم تهيئة قاعدة البيانات SQLite بنجاح!")
+            return True
+        except Exception as e:
+            print(f"❌ خطأ في تهيئة قاعدة البيانات: {e}")
+            return False
 
 def get_user(user_id):
-    """جلب بيانات المستخدم من قاعدة البيانات"""
-    conn = None
-    try:
-        conn = get_db_connection()
-        if not conn:
-            return create_default_user(user_id)
+    """جلب بيانات المستخدم"""
+    with db_lock:
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
             
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM users WHERE user_id = %s", (str(user_id),))
-            user_data = cur.fetchone()
+            cursor.execute("SELECT * FROM users WHERE user_id = ?", (str(user_id),))
+            user_data = cursor.fetchone()
             
             if user_data:
                 user_dict = dict(user_data)
@@ -159,19 +130,18 @@ def get_user(user_id):
                         user_dict['balance'] += bonus
                         user_dict['total_earned'] += bonus
                     
-                    # تحديث البيانات في قاعدة البيانات
-                    update_user(user_dict)
+                    # تحديث البيانات
+                    save_user(user_dict)
                 
+                conn.close()
                 return user_dict
             else:
+                conn.close()
                 return create_default_user(user_id)
                 
-    except Exception as e:
-        logger.error(f"❌ خطأ في جلب بيانات المستخدم {user_id}: {e}")
-        return create_default_user(user_id)
-    finally:
-        if conn:
-            conn.close()
+        except Exception as e:
+            print(f"❌ خطأ في جلب بيانات المستخدم {user_id}: {e}")
+            return create_default_user(user_id)
 
 def create_default_user(user_id):
     """إنشاء مستخدم جديد بإعدادات افتراضية"""
@@ -199,39 +169,19 @@ def create_default_user(user_id):
     return user_data
 
 def save_user(user_data):
-    """حفظ بيانات المستخدم في قاعدة البيانات"""
-    conn = None
-    try:
-        conn = get_db_connection()
-        if not conn:
-            return False
+    """حفظ بيانات المستخدم"""
+    with db_lock:
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
             
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO users (
+            cursor.execute("""
+                INSERT OR REPLACE INTO users (
                     user_id, username, first_name, balance, referrals_count, referrals_new,
                     games_played_today, total_games_played, total_earned, total_deposits,
                     vip_level, registration_date, last_activity, last_reset_date,
                     withdrawal_address, registration_days, last_daily_check
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-                )
-                ON CONFLICT (user_id) DO UPDATE SET
-                    username = EXCLUDED.username,
-                    first_name = EXCLUDED.first_name,
-                    balance = EXCLUDED.balance,
-                    referrals_count = EXCLUDED.referrals_count,
-                    referrals_new = EXCLUDED.referrals_new,
-                    games_played_today = EXCLUDED.games_played_today,
-                    total_games_played = EXCLUDED.total_games_played,
-                    total_earned = EXCLUDED.total_earned,
-                    total_deposits = EXCLUDED.total_deposits,
-                    vip_level = EXCLUDED.vip_level,
-                    last_activity = EXCLUDED.last_activity,
-                    last_reset_date = EXCLUDED.last_reset_date,
-                    withdrawal_address = EXCLUDED.withdrawal_address,
-                    registration_days = EXCLUDED.registration_days,
-                    last_daily_check = EXCLUDED.last_daily_check
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 user_data['user_id'], user_data['username'], user_data['first_name'],
                 user_data['balance'], user_data['referrals_count'], user_data['referrals_new'],
@@ -243,18 +193,12 @@ def save_user(user_data):
             ))
             
             conn.commit()
+            conn.close()
             return True
             
-    except Exception as e:
-        logger.error(f"❌ خطأ في حفظ بيانات المستخدم {user_data['user_id']}: {e}")
-        return False
-    finally:
-        if conn:
-            conn.close()
-
-def update_user(user_data):
-    """تحديث بيانات المستخدم (نسخة مبسطة لـ save_user)"""
-    return save_user(user_data)
+        except Exception as e:
+            print(f"❌ خطأ في حفظ بيانات المستخدم {user_data['user_id']}: {e}")
+            return False
 
 def update_user_activity(user_id):
     """تحديث نشاط المستخدم"""
@@ -1025,41 +969,37 @@ def stats(message):
         bot.reply_to(message, "❌ ليس لديك صلاحية!")
         return
     
-    conn = None
     try:
         update_user_activity(message.from_user.id)
         
-        conn = get_db_connection()
-        if not conn:
-            bot.reply_to(message, "❌ لا يمكن الاتصال بقاعدة البيانات")
-            return
+        with db_lock:
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
             
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT COUNT(*) as total_users FROM users")
-            total_users = cur.fetchone()['total_users']
+            cursor.execute("SELECT COUNT(*) FROM users")
+            total_users = cursor.fetchone()[0]
             
-            cur.execute("SELECT COUNT(*) as active_users FROM users WHERE balance > 0 OR games_played_today > 0")
-            active_users = cur.fetchone()['active_users']
+            cursor.execute("SELECT COUNT(*) FROM users WHERE balance > 0 OR games_played_today > 0")
+            active_users = cursor.fetchone()[0]
             
-            cur.execute("SELECT SUM(balance) as total_balance FROM users")
-            total_balance_result = cur.fetchone()['total_balance']
-            total_balance = total_balance_result if total_balance_result else 0
+            cursor.execute("SELECT SUM(balance) FROM users")
+            total_balance = cursor.fetchone()[0] or 0
             
-            cur.execute("SELECT SUM(referrals_count) as total_referrals FROM users")
-            total_referrals_result = cur.fetchone()['total_referrals']
-            total_referrals = total_referrals_result if total_referrals_result else 0
+            cursor.execute("SELECT SUM(referrals_count) FROM users")
+            total_referrals = cursor.fetchone()[0] or 0
             
-            cur.execute("SELECT SUM(total_deposits) as total_deposits FROM users")
-            total_deposits_result = cur.fetchone()['total_deposits']
-            total_deposits = total_deposits_result if total_deposits_result else 0
+            cursor.execute("SELECT SUM(total_deposits) FROM users")
+            total_deposits = cursor.fetchone()[0] or 0
             
-            cur.execute("SELECT COUNT(*) as today_players FROM users WHERE games_played_today > 0")
-            today_players = cur.fetchone()['today_players']
+            cursor.execute("SELECT COUNT(*) FROM users WHERE games_played_today > 0")
+            today_players = cursor.fetchone()[0]
             
-            cur.execute("SELECT vip_level, COUNT(*) as count FROM users GROUP BY vip_level")
+            cursor.execute("SELECT vip_level, COUNT(*) FROM users GROUP BY vip_level")
             vip_counts = {0: 0, 1: 0, 2: 0, 3: 0}
-            for row in cur.fetchall():
-                vip_counts[row['vip_level']] = row['count']
+            for row in cursor.fetchall():
+                vip_counts[row[0]] = row[1]
+            
+            conn.close()
         
         stats_text = f"""
 📈 إحصائيات البوت:
@@ -1081,9 +1021,6 @@ def stats(message):
         
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ: {e}")
-    finally:
-        if conn:
-            conn.close()
 
 # ======================
 # 🚀 تشغيل النظام مع إبقاء السيرفر شغال
