@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import time
 from flask import Flask
 import logging
+import requests
 
 # ✅ تفعيل السجلات المفصلة
 logging.basicConfig(
@@ -1300,7 +1301,7 @@ def run_bot():
                 timeout=60,
                 long_polling_timeout=30,
                 skip_pending=True,    # ✅ أهم إضافة!
-                allowed_updates=[]
+                request_timeout=90
             )
         except Exception as e:
             print(f"❌ خطأ في Polling: {e}")
