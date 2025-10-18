@@ -3,13 +3,11 @@ import telebot
 import json
 import random
 import threading
-import gspread
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from datetime import datetime, timedelta
 import shutil
 import time
 import requests
-from google.oauth2.service_account import Credentials
 from flask import Flask
 import logging
 
@@ -45,73 +43,122 @@ print("🤖 جاري إنشاء البوت...")
 bot = telebot.TeleBot(BOT_TOKEN)
 print("✅ تم إنشاء البوت بنجاح!")
 
-# 📊 Google Sheets Integration
-def init_google_sheets():
-    """تهيئة الاتصال بـ Google Sheets"""
-    try:
-        creds_json = os.getenv('GOOGLE_SHEETS_CREDENTIALS')
-        if creds_json:
-            creds_dict = json.loads(creds_json)
-            scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-            creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
-            client = gspread.authorize(creds)
-            return client.open("Bot-Users").sheet1
-        else:
-            print("⚠️ GOOGLE_SHEETS_CREDENTIALS not found")
-    except Exception as e:
-        print(f"❌ خطأ في Google Sheets: {e}")
-    return None
+# ======================
+# 🚀 نظام النسخ الاحتياطي لـ GitHub
+# ======================
 
-def sync_user_to_sheets(user_data):
-    """مزامنة بيانات المستخدم مع Google Sheets"""
+def upload_to_github():
+    """رفع البيانات لـ GitHub"""
     try:
-        sheet = init_google_sheets()
-        if not sheet:
+        import base64
+        import requests
+        
+        users_data = load_users()
+        if not users_data:
             return False
             
-        users = sheet.get_all_records()
-        user_id = user_data['user_id']
+        # تحويل البيانات لـ JSON
+        data_json = json.dumps(users_data, ensure_ascii=False, indent=2)
         
-        row_data = [
-            user_data['user_id'],
-            user_data.get('first_name', ''),
-            user_data.get('balance', 0),
-            user_data.get('referrals_count', 0),
-            user_data.get('referrals_new', 0),
-            user_data.get('games_played_today', 0),
-            user_data.get('total_games_played', 0),
-            user_data.get('total_earned', 0),
-            user_data.get('total_deposits', 0),
-            user_data.get('vip_level', 0),
-            user_data.get('registration_date', ''),
-            user_data.get('last_activity', ''),
-            user_data.get('withdrawal_address', ''),
-            user_data.get('registration_days', 0)
-        ]
-        
-        found = False
-        for i, user in enumerate(users, start=2):
-            if str(user['user_id']) == str(user_id):
-                sheet.update(f'A{i}:N{i}', [row_data])
-                found = True
-                break
-        
-        if not found:
-            sheet.append_row(row_data)
+        # إعدادات GitHub
+        github_token = os.getenv('GITHUB_TOKEN')
+        if not github_token:
+            print("❌ GITHUB_TOKEN not found")
+            return False
             
-        print(f"✅ تم مزامنة user_id {user_id}")
-        return True
+        # معلومات الريبو
+        repo_owner = "xcr431134"
+        repo_name = "bot-backup-data"
+        file_path = "data/users_data.json"
+        
+        url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{file_path}"
+        
+        headers = {
+            'Authorization': f'token {github_token}',
+            'Accept': 'application/vnd.github.v3+json'
+        }
+        
+        # التحقق إذا الملف موجود
+        response = requests.get(url, headers=headers)
+        sha = None
+        if response.status_code == 200:
+            sha = response.json()['sha']
+        
+        # رفع الملف
+        data = {
+            'message': f'🤖 Bot Backup - {datetime.now().strftime("%Y-%m-%d %H:%M")}',
+            'content': base64.b64encode(data_json.encode()).decode('utf-8'),
+            'sha': sha
+        }
+        
+        response = requests.put(url, headers=headers, json=data)
+        
+        if response.status_code in [200, 201]:
+            print("✅ تم رفع البيانات لـ GitHub بنجاح!")
+            return True
+        else:
+            print(f"❌ فشل الرفع: {response.status_code}")
+            return False
+            
     except Exception as e:
-        print(f"❌ خطأ في المزامنة: {e}")
+        print(f"❌ خطأ في الرفع لـ GitHub: {e}")
         return False
 
-def load_users():
-    """تحميل البيانات من الملف"""
+def download_from_github():
+    """تحميل البيانات من GitHub"""
     try:
+        import base64
+        import requests
+        
+        github_token = os.getenv('GITHUB_TOKEN')
+        if not github_token:
+            return None
+            
+        # معلومات الريبو
+        repo_owner = "xcr431134"
+        repo_name = "bot-backup-data"
+        file_path = "data/users_data.json"
+        
+        url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{file_path}"
+        
+        headers = {
+            'Authorization': f'token {github_token}',
+            'Accept': 'application/vnd.github.v3+json'
+        }
+        
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            content = response.json()['content']
+            decoded_content = base64.b64decode(content).decode('utf-8')
+            users_data = json.loads(decoded_content)
+            print("✅ تم تحميل البيانات من GitHub بنجاح!")
+            return users_data
+        else:
+            print("ℹ️ لا توجد بيانات على GitHub")
+            return None
+            
+    except Exception as e:
+        print(f"❌ خطأ في التحميل من GitHub: {e}")
+        return None
+
+def load_users():
+    """تحميل البيانات مع محاولة الاستعادة من GitHub"""
+    try:
+        # أولاً: حاول التحميل من GitHub
+        github_data = download_from_github()
+        if github_data:
+            # احفظ البيانات محلياً
+            with open(DATA_FILE, 'w', encoding='utf-8') as f:
+                json.dump(github_data, f, ensure_ascii=False, indent=2)
+            return github_data
+        
+        # إذا ما في اتصال: جرب الملف المحلي
         with open(DATA_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            print(f"📂 تم تحميل {len(data)} مستخدم")
+            print(f"📂 تم تحميل {len(data)} مستخدم من الذاكرة المحلية")
             return data
+            
     except FileNotFoundError:
         print("📂 لا يوجد بيانات سابقة")
         return {}
@@ -120,15 +167,18 @@ def load_users():
         return {}
 
 def save_users(users_data):
-    """حفظ البيانات في الملف ومزامنة مع Google Sheets"""
+    """حفظ البيانات مع نسخ احتياطي تلقائي"""
     try:
+        # الحفظ المحلي
         with open(DATA_FILE, 'w', encoding='utf-8') as f:
             json.dump(users_data, f, ensure_ascii=False, indent=2)
-        print(f"💾 تم حفظ {len(users_data)} مستخدم")
+        print(f"💾 تم حفظ {len(users_data)} مستخدم محلياً")
         
-        for user_data in users_data.values():
-            sync_user_to_sheets(user_data)
-            
+        # نسخ احتياطي لـ GitHub (في الخلفية)
+        backup_thread = threading.Thread(target=upload_to_github)
+        backup_thread.daemon = True
+        backup_thread.start()
+        
         return True
     except Exception as e:
         print(f"❌ خطأ في حفظ البيانات: {e}")
@@ -197,9 +247,6 @@ def save_user(user_data):
     users_data[user_id] = user_data
     
     print(f"💾 حفظ بيانات user_id: {user_id}")
-    
-    sync_user_to_sheets(user_data)
-    
     return save_users(users_data)
 
 def update_user_activity(user_id):
@@ -946,107 +993,34 @@ def stats(message):
     except Exception as e:
         bot.reply_to(message, f"❌ خطأ: {e}")
 
-# =============================================
-# 🆕 نظام النسخ الاحتياطي والاستعادة
-# =============================================
+# ======================
+# 🆕 أوامر GitHub Backup
+# ======================
 
-@bot.message_handler(commands=['backup'])
-def backup_data(message):
+@bot.message_handler(commands=['gitbackup'])
+def manual_backup(message):
+    """نسخ احتياطي يدوي"""
     if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "❌ ليس لديك صلاحية!")
         return
-    
-    try:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_file = f"backup_users_data_{timestamp}.json"
         
-        shutil.copy2(DATA_FILE, backup_file)
-        
-        with open(backup_file, 'rb') as f:
-            bot.send_document(
-                message.chat.id, 
-                f,
-                caption=f"📦 النسخة الاحتياطية - {timestamp}"
-            )
-        
-        bot.reply_to(message, f"✅ تم إنشاء نسخة احتياطية: {backup_file}")
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ في النسخ الاحتياطي: {e}")
+    success = upload_to_github()
+    if success:
+        bot.reply_to(message, "✅ تم النسخ الاحتياطي لـ GitHub بنجاح!")
+    else:
+        bot.reply_to(message, "❌ فشل النسخ الاحتياطي!")
 
-@bot.message_handler(commands=['restore'])
-def restore_data(message):
+@bot.message_handler(commands=['gitrestore'])
+def manual_restore(message):
+    """استعادة يدوية من GitHub"""
     if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "❌ ليس لديك صلاحية!")
         return
-    
-    try:
-        msg = bot.reply_to(message, "📤 الرجاء إرسال ملف النسخة الاحتياطية (JSON):")
-        bot.register_next_step_handler(msg, process_restore_file)
         
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ في الاستعادة: {e}")
-
-def process_restore_file(message):
-    try:
-        if not message.document:
-            bot.reply_to(message, "❌ لم يتم إرسال ملف!")
-            return
-        
-        file_info = bot.get_file(message.document.file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        
-        temp_file = "temp_restore.json"
-        with open(temp_file, 'wb') as f:
-            f.write(downloaded_file)
-        
-        with open(temp_file, 'r', encoding='utf-8') as f:
-            test_data = json.load(f)
-        
-        if not isinstance(test_data, dict):
-            bot.reply_to(message, "❌ الملف غير صالح!")
-            return
-        
-        backup_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        shutil.copy2(DATA_FILE, f"pre_restore_backup_{backup_timestamp}.json")
-        
-        shutil.copy2(temp_file, DATA_FILE)
-        
-        os.remove(temp_file)
-        
-        bot.reply_to(
-            message, 
-            f"✅ تم استعادة البيانات بنجاح!\n📊 عدد المستخدمين: {len(test_data)}"
-        )
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ في استعادة الملف: {e}")
-
-@bot.message_handler(commands=['fileinfo'])
-def file_info(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "❌ ليس لديك صلاحية!")
-        return
-    
-    try:
-        file_path = os.path.abspath(DATA_FILE)
-        file_size = os.path.getsize(DATA_FILE) if os.path.exists(DATA_FILE) else 0
-        file_exists = os.path.exists(DATA_FILE)
-        
-        users_data = load_users()
-        
-        info_text = f"""
-📁 معلومات ملف البيانات:
-
-📍 المسار: `{file_path}`
-📦 الحجم: {file_size} بايت
-✅ موجود: {'نعم' if file_exists else 'لا'}
-👥 عدد المستخدمين: {len(users_data)}"""
-        
-        bot.reply_to(message, info_text, parse_mode='Markdown')
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ خطأ: {e}")
+    users_data = download_from_github()
+    if users_data:
+        save_users(users_data)  # حفظ محلي
+        bot.reply_to(message, f"✅ تم استعادة {len(users_data)} مستخدم من GitHub!")
+    else:
+        bot.reply_to(message, "❌ لا توجد بيانات للاستعادة!")
 
 # =============================================
 # 🚀 تشغيل البوت المحسن
