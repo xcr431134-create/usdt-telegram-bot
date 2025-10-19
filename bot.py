@@ -50,7 +50,7 @@ def is_admin(user_id):
 # 🗄️ نظام SQLite مع إدارة محسنة للذاكرة
 # ======================
 
-DB_FILE = '/tmp/usdt_bot.db'
+DB_FILE = 'usdt_bot.db'
 db_lock = threading.Lock()
 
 # 🧩 مستويات VIP
