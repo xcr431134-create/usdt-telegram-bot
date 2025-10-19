@@ -117,32 +117,67 @@ def handle_referral_system(message):
     """معالجة نظام الإحالات عند /start"""
     try:
         user_id = message.from_user.id
-        command_parts = message.text.split()
+        print(f"🔍 فحص الإحالة للمستخدم: {user_id}")
+        print(f"🔍 النص المستلم: {message.text}")
         
-        # التحقق إذا هناك رابط إحالة
-        if len(command_parts) > 1 and command_parts[1].startswith('ref'):
-            referrer_id = int(command_parts[1][3:])  # استخراج آيدي المُحيل
+        command_parts = message.text.split()
+        print(f"🔍 أجزاء الأمر: {command_parts}")
+        
+        # تحقق إذا فيه رابط إحالة
+        if len(command_parts) > 1:
+            ref_param = command_parts[1]
+            print(f"🔍 المعامل: {ref_param}")
             
-            # التأكد أن المستخدم الحالي ليس المحيل نفسه
-            if referrer_id != user_id:
-                # التأكد أن المحيل موجود
-                referrer = get_user(referrer_id)
-                if referrer:
-                    # تحديث بيانات المحيل
-                    update_user(
-                        referrer_id,
-                        balance=referrer['balance'] + 1.0,
-                        total_earnings=referrer['total_earnings'] + 1.0,
-                        referral_count=referrer['referral_count'] + 1,
-                        new_referrals=referrer['new_referrals'] + 1
-                    )
+            if ref_param.startswith('ref'):
+                try:
+                    referrer_id = int(ref_param[3:])  # استخراج الآيدي بعد 'ref'
+                    print(f"🔍 تم اكتشاف إحالة من: {referrer_id}")
                     
-                    print(f"✅ تمت إحالة جديدة: {referrer_id} ← {user_id}")
+                    # تحقق أن المستخدم الحالي ليس المحيل نفسه
+                    if referrer_id != user_id:
+                        print(f"🔍 التحقق من وجود المحيل: {referrer_id}")
+                        referrer = get_user(referrer_id)
+                        
+                        if referrer:
+                            print(f"✅ المحيل موجود: {referrer['first_name']}")
+                            
+                            # تحديث بيانات المحيل
+                            update_user(
+                                referrer_id,
+                                balance=referrer['balance'] + 1.0,
+                                total_earnings=referrer['total_earnings'] + 1.0,
+                                referral_count=referrer['referral_count'] + 1,
+                                new_referrals=referrer['new_referrals'] + 1
+                            )
+                            
+                            print(f"🎉 تمت إحالة جديدة: {referrer_id} ← {user_id}")
+                            
+                            # إرسال إشعار للمحيل
+                            try:
+                                updated_referrer = get_user(referrer_id)
+                                bot.send_message(
+                                    referrer_id,
+                                    f"🎉 **تمت إحالة جديدة!**\n\n"
+                                    f"👤 تم تسجيل مستخدم جديد عبر رابطك\n"
+                                    f"💰 تم إضافة 1 USDT إلى رصيدك\n"
+                                    f"💵 رصيدك الحالي: {updated_referrer['balance']:.2f} USDT\n"
+                                    f"📊 إجمالي إحالاتك: {updated_referrer['referral_count']}"
+                                )
+                            except Exception as e:
+                                print(f"⚠️ لم يتم إرسال إشعار الإحالة: {e}")
+                        else:
+                            print(f"❌ المحيل {referrer_id} غير موجود")
+                    else:
+                        print("❌ المستخدم يحاول إحالة نفسه")
+                except ValueError as e:
+                    print(f"❌ خطأ في تحويل الآيدي: {e}")
+            else:
+                print("❌ المعامل لا يبدأ بـ 'ref'")
+        else:
+            print("❌ لا يوجد معامل إحالة")
                     
     except Exception as e:
-        print(f"⚠️ خطأ في نظام الإحالات: {e}")
-# ⚠️ ⚠️ ⚠️ كل الدوال الأخرى تبقى كما هي بدون أي تغيير ⚠️ ⚠️ ⚠️
-# جميع الدوال التالية محفوظة بنفس الشكل بالضبط:
+        print(f"❌ خطأ في نظام الإحالات: {e}")
 
 def get_remaining_attempts(user):
     base_attempts = VIP_LEVELS[user['vip_level']]['max_attempts']
