@@ -1287,22 +1287,22 @@ def run_bot():
     """الحل النهائي لمشكلة الـ Conflict"""
     print("🚀 تشغيل البوت الجديد...")
     
-    # تنظيف كامل
+    # تنظيف كامل مع تأكيد
     try:
         bot.delete_webhook()
         print("✅ تنظيف الـ webhook")
-        time.sleep(8)  # انتظار أطول
-    except:
-        pass
+        time.sleep(10)  # انتظار أطول للتأكد
+    except Exception as e:
+        print(f"⚠️  تنظيف webhook: {e}")
     
     # تأكد من عدم وجود نسخ شغالة
     import requests
     try:
-        response = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getMe", timeout=5)
+        response = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getMe", timeout=10)
         if response.status_code == 200:
             print("✅ التوكن شغال والسيرفر متصل")
-    except:
-        print("❌ مشكلة في الاتصال")
+    except Exception as e:
+        print(f"⚠️  فحص الاتصال: {e}")
     
     if not init_database():
         print("⚠️  تم المتابعة بدون قاعدة البيانات")
@@ -1311,26 +1311,28 @@ def run_bot():
     
     while True:
         try:
-            # التشغيل الحصري
+            # التشغيل الحصري مع إعدادات محسنة
             bot.infinity_polling(
-                timeout=20,
-                long_polling_timeout=10,
-                skip_pending=True
+                timeout=60,
+                long_polling_timeout=30,
+                skip_pending=True,
+                allowed_updates=['message', 'callback_query']
             )
         except Exception as e:
             print(f"❌ خطأ: {e}")
-            print("🔄 إعادة التشغيل بعد 15 ثانية...")
-            time.sleep(15)
-        except:
-            print("🔥 خطأ صامت - إعادة التشغيل...")
-            time.sleep(5)
+            print("🔄 إعادة التشغيل بعد 30 ثانية...")
+            time.sleep(30)
+        except KeyboardInterrupt:
+            print("⏹️  إيقاف البوت...")
+            break
+
 if __name__ == "__main__":
     print("🎯 نظام التشغيل المحسن - الإصدار النهائي")
     print("🕒 وقت التشغيل:", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
     
     # 🔥 إضافة Flask server علشان السيرفر ما يوقف الحاوية
     def run_flask():
-        app.run(host='0.0.0.0', port=8080, debug=False)
+        app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)
     
     # تشغيل البوت وFlask سوا
     import threading
