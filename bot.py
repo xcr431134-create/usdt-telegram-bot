@@ -112,7 +112,35 @@ def update_user(user_id, **kwargs):
     except Exception as e:
         print(f"❌ خطأ في تحديث المستخدم: {e}")
         return False
-
+# نظام الإحالات الجديد
+def handle_referral_system(message):
+    """معالجة نظام الإحالات عند /start"""
+    try:
+        user_id = message.from_user.id
+        command_parts = message.text.split()
+        
+        # التحقق إذا هناك رابط إحالة
+        if len(command_parts) > 1 and command_parts[1].startswith('ref'):
+            referrer_id = int(command_parts[1][3:])  # استخراج آيدي المُحيل
+            
+            # التأكد أن المستخدم الحالي ليس المحيل نفسه
+            if referrer_id != user_id:
+                # التأكد أن المحيل موجود
+                referrer = get_user(referrer_id)
+                if referrer:
+                    # تحديث بيانات المحيل
+                    update_user(
+                        referrer_id,
+                        balance=referrer['balance'] + 1.0,
+                        total_earnings=referrer['total_earnings'] + 1.0,
+                        referral_count=referrer['referral_count'] + 1,
+                        new_referrals=referrer['new_referrals'] + 1
+                    )
+                    
+                    print(f"✅ تمت إحالة جديدة: {referrer_id} ← {user_id}")
+                    
+    except Exception as e:
+        print(f"⚠️ خطأ في نظام الإحالات: {e}")
 # ⚠️ ⚠️ ⚠️ كل الدوال الأخرى تبقى كما هي بدون أي تغيير ⚠️ ⚠️ ⚠️
 # جميع الدوال التالية محفوظة بنفس الشكل بالضبط:
 
@@ -324,6 +352,8 @@ def handle_start(message):
     try:
         user_id = message.from_user.id
         print(f"📩 استلام /start من {user_id}")
+        
+        handle_referral_system(message)
         
         user_data = get_user(user_id)
         
