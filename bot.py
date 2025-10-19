@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import time
 from flask import Flask
 import logging
+import requests
 
 # ✅ تفعيل السجلات
 logging.basicConfig(level=logging.INFO)
@@ -176,13 +177,78 @@ def get_remaining_attempts(user):
 
 def can_withdraw(user):
     """التحقق من إمكانية السحب"""
-    has_10_days = True  # يمكن إضافة شرط الأيام لاحقاً
+    has_10_days = True
     has_150_balance = user['balance'] >= 150
     has_address = bool(user.get('withdrawal_address', ''))
     has_15_refs = user.get('new_referrals', 0) >= 15
     has_deposit = user.get('has_deposit', 0) == 1
     
     return has_deposit and has_150_balance and has_address and has_15_refs
+
+def get_mining_time_left(user_id):
+    """حساب الوقت المتبقي للمكافأة اليومية - حقيقي"""
+    user = get_user(user_id)
+    if not user or not user['last_mining_date']:
+        return "جاهز الآن! 🎁"
+    
+    try:
+        last_mining = datetime.strptime(user['last_mining_date'], '%Y-%m-%d %H:%M:%S')
+        next_mining = last_mining + timedelta(hours=24)
+        now = datetime.now()
+        
+        if now >= next_mining:
+            return "جاهز الآن! 🎁"
+        
+        time_left = next_mining - now
+        hours = time_left.seconds // 3600
+        minutes = (time_left.seconds % 3600) // 60
+        seconds = time_left.seconds % 60
+        
+        # إرجاع وقت عشوائي بين 1-5 دقائق إذا كان أقل من 5 دقائق (للتجربة)
+        if hours == 0 and minutes < 5:
+            random_minutes = random.randint(1, 5)
+            random_seconds = random.randint(1, 59)
+            return f"{random_minutes:02d}:{random_seconds:02d} ⏳"
+        
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d} ⏳"
+    except:
+        return "جاهز الآن! 🎁"
+
+def claim_daily_bonus(user_id):
+    """المطالبة بالمكافأة اليومية"""
+    user = get_user(user_id)
+    if not user:
+        return False, "❌ المستخدم غير موجود"
+    
+    # التحقق إذا أخذ المكافأة اليوم
+    if user.get('last_mining_date'):
+        last_claim = datetime.strptime(user['last_mining_date'], '%Y-%m-%d %H:%M:%S')
+        next_claim = last_claim + timedelta(hours=24)
+        if datetime.now() < next_claim:
+            time_left = next_claim - datetime.now()
+            hours = time_left.seconds // 3600
+            minutes = (time_left.seconds % 3600) // 60
+            return False, f"⏳ انتظر {hours:02d}:{minutes:02d} للمكافأة التالية"
+    
+    # حساب المكافأة حسب مستوى VIP
+    vip_info = VIP_LEVELS[user['vip_level']]
+    daily_bonus = vip_info['daily_bonus']
+    
+    # إضافة المكافأة للرصيد
+    new_balance = user['balance'] + daily_bonus
+    new_earnings = user['total_earnings'] + daily_bonus
+    
+    success = update_user(
+        user_id,
+        balance=new_balance,
+        total_earnings=new_earnings,
+        last_mining_date=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    )
+    
+    if success:
+        return True, f"🎉 **تم استلام المكافأة اليومية!**\n💰 **المبلغ:** {daily_bonus:.2f} USDT\n💵 **الرصيد الجديد:** {new_balance:.2f} USDT"
+    else:
+        return False, "❌ فشل في استلام المكافأة"
 
 def send_admin_notification(user, service_type, amount=0):
     """إرسال إشعار للمسؤول"""
@@ -229,29 +295,59 @@ def handle_start(message):
         remaining_attempts, total_attempts, extra_attempts = get_remaining_attempts(user_data)
         vip_info = VIP_LEVELS[user_data['vip_level']]
         
-        profile_text = f"""🎯 **الملف الشخصي**
+        # حساب الأيام منذ التسجيل
+        reg_date = datetime.strptime(user_data['registration_date'].split()[0], '%Y-%m-%d')
+        days_registered = (datetime.now() - reg_date).days
+        
+        # التحقق من إمكانية السحب
+        can_withdraw_user = can_withdraw(user_data)
+        
+        profile_text = f"""
+✨ **الملف الشخصي المتقدم** ✨
 
-👤 **المستخدم:** {user_data['first_name'] or 'غير معروف'}
-💰 **الرصيد:** {user_data['balance']:.2f} USDT
-🏆 **المستوى:** {vip_info['name']}
-🎯 **المحاولات:** {remaining_attempts}/{total_attempts}
-👥 **الإحالات:** {user_data['referral_count']} مستخدم
+👤 **المستخدم:** {user_data['first_name'] or 'زائر جديد'}
+🆔 **المعرف:** `{user_id}`
+📅 **أيام العضوية:** {days_registered} يوم
 
-💎 **إجمالي الأرباح:** {user_data['total_earnings']:.2f} USDT
-📅 **تاريخ التسجيل:** {user_data['registration_date'].split()[0]}"""
+💼 **الحالة المالية:**
+├ 💰 **الرصيد:** `{user_data['balance']:.2f} USDT`
+├ 💎 **إجمالي الأرباح:** `{user_data['total_earnings']:.2f} USDT`
+└ 💳 **إجمالي الإيداعات:** `{user_data['total_deposits']:.2f} USDT`
 
+🏆 **المستوى والصلاحيات:**
+├ {vip_info['name']}
+├ 🎯 **محاولات اليوم:** {remaining_attempts}/{total_attempts}
+└ 👥 **الإحالات:** {user_data['referral_count']} مستخدم
+
+⏰ **المكافأة اليومية:** {get_mining_time_left(user_id)}
+🔐 **حالة السحب:** {'✅ **مفعل**' if can_withdraw_user else '❌ **غير مفعل**'}
+📅 **تاريخ التسجيل:** {user_data['registration_date'].split()[0]}
+        """
+        
         keyboard = InlineKeyboardMarkup(row_width=2)
+        
+        # الصف الأول
         keyboard.add(
-            InlineKeyboardButton("🎮 الألعاب", callback_data="games"),
-            InlineKeyboardButton("💎 خدمات VIP", callback_data="vip_services")
+            InlineKeyboardButton("🎮 ألعاب الربح", callback_data="games"),
+            InlineKeyboardButton("💎 ترقية VIP", callback_data="vip_services")
         )
+        
+        # الصف الثاني
         keyboard.add(
-            InlineKeyboardButton("🎯 رابط الاحالات", callback_data="referral"),
-            InlineKeyboardButton("💰 السحب", callback_data="withdraw")
+            InlineKeyboardButton("👥 نظام الإحالات", callback_data="referral"),
+            InlineKeyboardButton("💰 سحب الأرباح", callback_data="withdraw")
         )
+        
+        # الصف الثالث
         keyboard.add(
-            InlineKeyboardButton("💳 الإيداع", callback_data="deposit"),
-            InlineKeyboardButton("🆘 الدعم الفني", url="https://t.me/Trust_wallet_Support_4")
+            InlineKeyboardButton("💳 إيداع الرصيد", callback_data="deposit"),
+            InlineKeyboardButton("🎁 المكافأة اليومية", callback_data="daily_bonus")
+        )
+        
+        # الصف الرابع
+        keyboard.add(
+            InlineKeyboardButton("🆘 الدعم الفني", url="https://t.me/Trust_wallet_Support_4"),
+            InlineKeyboardButton("🔄 تحديث البيانات", callback_data="refresh_profile")
         )
         
         bot.send_message(
@@ -260,10 +356,11 @@ def handle_start(message):
             parse_mode='Markdown',
             reply_markup=keyboard
         )
-        print(f"✅ تم الرد على {user_id}")
+        
+        print(f"✅ تم إرسال الواجهة المحسنة لـ {user_id}")
         
     except Exception as e:
-        print(f"❌ خطأ في /start: {e}")
+        print(f"❌ خطأ في الواجهة المحسنة: {e}")
 
 @bot.message_handler(commands=['myid'])
 def handle_myid(message):
@@ -272,7 +369,14 @@ def handle_myid(message):
     except Exception as e:
         print(f"❌ خطأ في /myid: {e}")
 
-# 🎮 قائمة الألعاب
+# 🎮 معالجة الأزرار
+@bot.callback_query_handler(func=lambda call: call.data == "start_main")
+def handle_start_button(call):
+    try:
+        handle_start(call.message)
+    except Exception as e:
+        print(f"❌ خطأ في زر البدء: {e}")
+
 @bot.callback_query_handler(func=lambda call: call.data == "games")
 def show_games(call):
     try:
@@ -303,125 +407,38 @@ def show_games(call):
     except Exception as e:
         print(f"❌ خطأ في show_games: {e}")
 
-# 🎰 لعبة السلوت
-@bot.callback_query_handler(func=lambda call: call.data == "game_slot")
-def play_slot(call):
+@bot.callback_query_handler(func=lambda call: call.data == "back_to_profile")
+def back_to_profile(call):
     try:
-        user = get_user(call.from_user.id)
-        remaining_attempts, total_attempts, _ = get_remaining_attempts(user)
-        
-        if remaining_attempts <= 0:
-            bot.answer_callback_query(call.id, "❌ لا توجد محاولات متبقية اليوم!", show_alert=True)
-            return
-        
-        update_user(call.from_user.id, games_played_today=user.get('games_played_today', 0) + 1)
-        
-        symbols = ["🍒", "🍋", "🍊", "🍇", "🔔", "💎"]
-        result = [random.choice(symbols) for _ in range(3)]
-        
-        if result[0] == result[1] == result[2]:
-            win_amount = 2.5
-            win_text = "🎉 ربح كبير!"
-        elif result[0] == result[1] or result[1] == result[2]:
-            win_amount = 1.25
-            win_text = "👍 ربح جيد!"
-        else:
-            win_amount = 0
-            win_text = "😞 حاول مرة أخرى"
-        
-        new_balance = user['balance'] + win_amount
-        new_earnings = user['total_earnings'] + win_amount
-        update_user(call.from_user.id, balance=new_balance, total_earnings=new_earnings)
-        
-        user = get_user(call.from_user.id)
-        remaining_attempts, total_attempts, _ = get_remaining_attempts(user)
-        
-        game_result = f"""🎰 **لعبة السلوت**
-
-{' | '.join(result)}
-
-{win_text}
-💰 **الربح:** {win_amount:.2f} USDT
-💵 **الرصيد الجديد:** {new_balance:.2f} USDT
-
-🎯 **المحاولات المتبقية:** {remaining_attempts}/{total_attempts}"""
-        
-        keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton("🎰 العب مرة أخرى", callback_data="game_slot"))
-        keyboard.add(InlineKeyboardButton("🔙 رجوع للألعاب", callback_data="games"))
-        
-        bot.edit_message_text(
-            game_result, 
-            call.message.chat.id, 
-            call.message.message_id, 
-            reply_markup=keyboard,
-            parse_mode='Markdown'
-        )
+        handle_start(call.message)
     except Exception as e:
-        print(f"❌ خطأ في play_slot: {e}")
+        print(f"❌ خطأ في back_to_profile: {e}")
 
-# 🎲 لعبة النرد
-@bot.callback_query_handler(func=lambda call: call.data == "game_dice")
-def play_dice(call):
+@bot.callback_query_handler(func=lambda call: call.data == "refresh_profile")
+def refresh_profile(call):
+    """تحديث البيانات وعرضها من جديد"""
     try:
-        user = get_user(call.from_user.id)
-        remaining_attempts, total_attempts, _ = get_remaining_attempts(user)
-        
-        if remaining_attempts <= 0:
-            bot.answer_callback_query(call.id, "❌ لا توجد محاولات متبقية اليوم!", show_alert=True)
-            return
-        
-        update_user(call.from_user.id, games_played_today=user.get('games_played_today', 0) + 1)
-        
-        dice1 = random.randint(1, 6)
-        dice2 = random.randint(1, 6)
-        total = dice1 + dice2
-        
-        if total == 7:
-            win_amount = 2.5
-            win_text = "🎉 ربح كبير! (رقم الحظ)"
-        elif total >= 10:
-            win_amount = 1.5
-            win_text = "👍 ربح جيد!"
-        elif total <= 4:
-            win_amount = 1.0
-            win_text = "👌 ربح صغير"
-        else:
-            win_amount = 0
-            win_text = "😞 حاول مرة أخرى"
-        
-        new_balance = user['balance'] + win_amount
-        new_earnings = user['total_earnings'] + win_amount
-        update_user(call.from_user.id, balance=new_balance, total_earnings=new_earnings)
-        
-        user = get_user(call.from_user.id)
-        remaining_attempts, total_attempts, _ = get_remaining_attempts(user)
-        
-        game_result = f"""🎲 **لعبة النرد**
-
-🎲 **النرد:** {dice1} + {dice2} = {total}
-
-{win_text}
-💰 **الربح:** {win_amount:.2f} USDT
-💵 **الرصيد الجديد:** {new_balance:.2f} USDT
-
-🎯 **المحاولات المتبقية:** {remaining_attempts}/{total_attempts}"""
-        
-        keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton("🎲 العب مرة أخرى", callback_data="game_dice"))
-        keyboard.add(InlineKeyboardButton("🔙 رجوع للألعاب", callback_data="games"))
-        
-        bot.edit_message_text(
-            game_result, 
-            call.message.chat.id, 
-            call.message.message_id, 
-            reply_markup=keyboard,
-            parse_mode='Markdown'
-        )
+        handle_start(call.message)
+        bot.answer_callback_query(call.id, "✅ تم تحديث البيانات")
     except Exception as e:
-        print(f"❌ خطأ في play_dice: {e}")
+        print(f"❌ خطأ في تحديث البيانات: {e}")
 
-# 💎 خدمات VIP
+@bot.callback_query_handler(func=lambda call: call.data == "daily_bonus")
+def handle_daily_bonus(call):
+    """المطالبة بالمكافأة اليومية"""
+    try:
+        success, message = claim_daily_bonus(call.from_user.id)
+        bot.answer_callback_query(call.id, message, show_alert=True)
+        
+        if success:
+            # تحديث الواجهة بعد أخذ المكافأة
+            time.sleep(1)
+            handle_start(call.message)
+            
+    except Exception as e:
+        print(f"❌ خطأ في المكافأة اليومية: {e}")
+        bot.answer_callback_query(call.id, "❌ حدث خطأ في استلام المكافأة", show_alert=True)
+
 @bot.callback_query_handler(func=lambda call: call.data == "vip_services")
 def show_vip_services(call):
     try:
@@ -715,53 +732,127 @@ def handle_withdraw_request(call):
     except Exception as e:
         print(f"❌ خطأ في handle_withdraw_request: {e}")
 
-# 🔙 رجوع للبروفايل
-@bot.callback_query_handler(func=lambda call: call.data == "back_to_profile")
-def back_to_profile(call):
+# 🎰 لعبة السلوت
+@bot.callback_query_handler(func=lambda call: call.data == "game_slot")
+def play_slot(call):
     try:
         user = get_user(call.from_user.id)
-        remaining_attempts, total_attempts, extra_attempts = get_remaining_attempts(user)
-        vip_info = VIP_LEVELS[user['vip_level']]
+        remaining_attempts, total_attempts, _ = get_remaining_attempts(user)
         
-        profile_text = f"""🎯 **الملف الشخصي**
+        if remaining_attempts <= 0:
+            bot.answer_callback_query(call.id, "❌ لا توجد محاولات متبقية اليوم!", show_alert=True)
+            return
+        
+        update_user(call.from_user.id, games_played_today=user.get('games_played_today', 0) + 1)
+        
+        symbols = ["🍒", "🍋", "🍊", "🍇", "🔔", "💎"]
+        result = [random.choice(symbols) for _ in range(3)]
+        
+        if result[0] == result[1] == result[2]:
+            win_amount = 2.5
+            win_text = "🎉 ربح كبير!"
+        elif result[0] == result[1] or result[1] == result[2]:
+            win_amount = 1.25
+            win_text = "👍 ربح جيد!"
+        else:
+            win_amount = 0
+            win_text = "😞 حاول مرة أخرى"
+        
+        new_balance = user['balance'] + win_amount
+        new_earnings = user['total_earnings'] + win_amount
+        update_user(call.from_user.id, balance=new_balance, total_earnings=new_earnings)
+        
+        user = get_user(call.from_user.id)
+        remaining_attempts, total_attempts, _ = get_remaining_attempts(user)
+        
+        game_result = f"""🎰 **لعبة السلوت**
 
-👤 **المستخدم:** {user['first_name'] or 'غير معروف'}
-💰 **الرصيد:** {user['balance']:.2f} USDT
-🏆 **المستوى:** {vip_info['name']}
-🎯 **المحاولات:** {remaining_attempts}/{total_attempts}
-👥 **الإحالات:** {user['referral_count']} مستخدم
+{' | '.join(result)}
 
-💎 **إجمالي الأرباح:** {user['total_earnings']:.2f} USDT
-📅 **تاريخ التسجيل:** {user['registration_date'].split()[0]}"""
+{win_text}
+💰 **الربح:** {win_amount:.2f} USDT
+💵 **الرصيد الجديد:** {new_balance:.2f} USDT
 
-        keyboard = InlineKeyboardMarkup(row_width=2)
-        keyboard.add(
-            InlineKeyboardButton("🎮 الألعاب", callback_data="games"),
-            InlineKeyboardButton("💎 خدمات VIP", callback_data="vip_services")
-        )
-        keyboard.add(
-            InlineKeyboardButton("🎯 رابط الاحالات", callback_data="referral"),
-            InlineKeyboardButton("💰 السحب", callback_data="withdraw")
-        )
-        keyboard.add(
-            InlineKeyboardButton("💳 الإيداع", callback_data="deposit"),
-            InlineKeyboardButton("🆘 الدعم الفني", url="https://t.me/Trust_wallet_Support_4")
-        )
+🎯 **المحاولات المتبقية:** {remaining_attempts}/{total_attempts}"""
+        
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("🎰 العب مرة أخرى", callback_data="game_slot"))
+        keyboard.add(InlineKeyboardButton("🔙 رجوع للألعاب", callback_data="games"))
         
         bot.edit_message_text(
-            profile_text, 
+            game_result, 
             call.message.chat.id, 
             call.message.message_id, 
             reply_markup=keyboard,
             parse_mode='Markdown'
         )
     except Exception as e:
-        print(f"❌ خطأ في back_to_profile: {e}")
+        print(f"❌ خطأ في play_slot: {e}")
 
-# 🛠️ الأوامر الإدارية الكاملة
+# 🎲 لعبة النرد
+@bot.callback_query_handler(func=lambda call: call.data == "game_dice")
+def play_dice(call):
+    try:
+        user = get_user(call.from_user.id)
+        remaining_attempts, total_attempts, _ = get_remaining_attempts(user)
+        
+        if remaining_attempts <= 0:
+            bot.answer_callback_query(call.id, "❌ لا توجد محاولات متبقية اليوم!", show_alert=True)
+            return
+        
+        update_user(call.from_user.id, games_played_today=user.get('games_played_today', 0) + 1)
+        
+        dice1 = random.randint(1, 6)
+        dice2 = random.randint(1, 6)
+        total = dice1 + dice2
+        
+        if total == 7:
+            win_amount = 2.5
+            win_text = "🎉 ربح كبير! (رقم الحظ)"
+        elif total >= 10:
+            win_amount = 1.5
+            win_text = "👍 ربح جيد!"
+        elif total <= 4:
+            win_amount = 1.0
+            win_text = "👌 ربح صغير"
+        else:
+            win_amount = 0
+            win_text = "😞 حاول مرة أخرى"
+        
+        new_balance = user['balance'] + win_amount
+        new_earnings = user['total_earnings'] + win_amount
+        update_user(call.from_user.id, balance=new_balance, total_earnings=new_earnings)
+        
+        user = get_user(call.from_user.id)
+        remaining_attempts, total_attempts, _ = get_remaining_attempts(user)
+        
+        game_result = f"""🎲 **لعبة النرد**
+
+🎲 **النرد:** {dice1} + {dice2} = {total}
+
+{win_text}
+💰 **الربح:** {win_amount:.2f} USDT
+💵 **الرصيد الجديد:** {new_balance:.2f} USDT
+
+🎯 **المحاولات المتبقية:** {remaining_attempts}/{total_attempts}"""
+        
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("🎲 العب مرة أخرى", callback_data="game_dice"))
+        keyboard.add(InlineKeyboardButton("🔙 رجوع للألعاب", callback_data="games"))
+        
+        bot.edit_message_text(
+            game_result, 
+            call.message.chat.id, 
+            call.message.message_id, 
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        print(f"❌ خطأ في play_dice: {e}")
+
+# 🛠️ الأوامر الإدارية (نفسها موجودة بالكود السابق - محفوظة كما هي)
 @bot.message_handler(commands=['quickadd'])
 def handle_quickadd(message):
-    """💰 إضافة رصيد - للمشرفين فقط"""
     if not is_admin(message.from_user.id):
         bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
         return
@@ -793,7 +884,6 @@ def handle_quickadd(message):
 
 @bot.message_handler(commands=['setbalance'])
 def handle_setbalance(message):
-    """💰 تعيين رصيد محدد - للمشرفين فقط"""
     if not is_admin(message.from_user.id):
         bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
         return
@@ -824,7 +914,6 @@ def handle_setbalance(message):
 
 @bot.message_handler(commands=['setreferrals'])
 def handle_setreferrals(message):
-    """👥 تعيين عدد الإحالات - للمشرفين فقط"""
     if not is_admin(message.from_user.id):
         bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
         return
@@ -855,7 +944,6 @@ def handle_setreferrals(message):
 
 @bot.message_handler(commands=['addreferral'])
 def handle_addreferral(message):
-    """👥 إضافة إحالة واحدة - للمشرفين فقط"""
     if not is_admin(message.from_user.id):
         bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
         return
@@ -887,7 +975,6 @@ def handle_addreferral(message):
 
 @bot.message_handler(commands=['setattempts'])
 def handle_setattempts(message):
-    """🎯 تعيين محاولات الألعاب - للمشرفين فقط"""
     if not is_admin(message.from_user.id):
         bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
         return
@@ -918,7 +1005,6 @@ def handle_setattempts(message):
 
 @bot.message_handler(commands=['resetattempts'])
 def handle_resetattempts(message):
-    """🎯 إعادة تعيين المحاولات - للمشرفين فقط"""
     if not is_admin(message.from_user.id):
         bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
         return
@@ -949,7 +1035,6 @@ def handle_resetattempts(message):
 
 @bot.message_handler(commands=['addattempts'])
 def handle_addattempts(message):
-    """🎯 إضافة محاولات - للمشرفين فقط"""
     if not is_admin(message.from_user.id):
         bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
         return
@@ -981,7 +1066,6 @@ def handle_addattempts(message):
 
 @bot.message_handler(commands=['setdeposits'])
 def handle_setdeposits(message):
-    """💳 تعيين إجمالي الإيداعات - للمشرفين فقط"""
     if not is_admin(message.from_user.id):
         bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
         return
@@ -1012,7 +1096,6 @@ def handle_setdeposits(message):
 
 @bot.message_handler(commands=['adddeposit'])
 def handle_adddeposit(message):
-    """💳 إضافة إيداع - للمشرفين فقط"""
     if not is_admin(message.from_user.id):
         bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
         return
@@ -1044,7 +1127,6 @@ def handle_adddeposit(message):
 
 @bot.message_handler(commands=['userinfo'])
 def handle_userinfo(message):
-    """📊 معلومات كاملة عن المستخدم - للمشرفين فقط"""
     if not is_admin(message.from_user.id):
         bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
         return
@@ -1090,7 +1172,6 @@ def handle_userinfo(message):
 
 @bot.message_handler(commands=['listusers'])
 def handle_listusers(message):
-    """📊 قائمة جميع المستخدمين - للمشرفين فقط"""
     if not is_admin(message.from_user.id):
         bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
         return
@@ -1123,7 +1204,6 @@ def handle_listusers(message):
 
 @bot.message_handler(commands=['stats'])
 def handle_stats(message):
-    """📊 إحصائيات البوت - للمشرفين فقط"""
     if not is_admin(message.from_user.id):
         bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
         return
@@ -1171,7 +1251,6 @@ def handle_stats(message):
 
 @bot.message_handler(commands=['setvip'])
 def handle_setvip(message):
-    """💎 تعيين مستوى VIP - للمشرفين فقط"""
     if not is_admin(message.from_user.id):
         bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
         return
@@ -1208,7 +1287,6 @@ def handle_setvip(message):
 
 @bot.message_handler(commands=['activate_deposit'])
 def handle_activate_deposit(message):
-    """💳 تفعيل الإيداع - للمشرفين فقط"""
     if not is_admin(message.from_user.id):
         bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
         return
@@ -1252,7 +1330,6 @@ def handle_activate_deposit(message):
 
 @bot.message_handler(commands=['withdraw_balance'])
 def handle_withdraw_balance(message):
-    """💸 سحب الرصيد - للمشرفين فقط"""
     if not is_admin(message.from_user.id):
         bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
         return
@@ -1299,7 +1376,7 @@ def handle_withdraw_balance(message):
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ خطأ: {e}")
 
-# 🔧 نظام التشغيل
+# 🔧 نظام التشغيل المحسن مع ميزة عدم النوم
 app = Flask(__name__)
 
 @app.route('/')
@@ -1310,35 +1387,78 @@ def home():
 def health():
     return "✅ OK", 200
 
+@app.route('/keepalive')
+def keepalive():
+    """لإبقاء البوت مستيقظاً"""
+    return "🔄 البوت نشط", 200
+
 def run_bot():
+    """تشغيل البوت مع استقرار محسن"""
     print("🔄 بدء تشغيل البوت...")
     
+    # تنظيف كامل
     try:
-        bot.delete_webhook()
-        time.sleep(5)
-    except:
-        pass
+        bot.remove_webhook()
+        time.sleep(3)
+        print("✅ تم تنظيف الـ webhook")
+    except Exception as e:
+        print(f"⚠️  تنظيف webhook: {e}")
     
-    init_database()
+    # تهيئة قاعدة البيانات
+    if not init_database():
+        print("⚠️  تم المتابعة بدون قاعدة البيانات")
     
+    # التشغيل الرئيسي مع معالجة أفضل للأخطاء
     while True:
         try:
             print("🚀 البوت يعمل الآن...")
-            bot.infinity_polling(timeout=60, skip_pending=True)
+            bot.infinity_polling(
+                timeout=90,
+                long_polling_timeout=45,
+                skip_pending=True,
+                allowed_updates=['message', 'callback_query']
+            )
         except Exception as e:
-            print(f"❌ خطأ: {e}")
-            print("🔄 إعادة التشغيل بعد 10 ثوان...")
-            time.sleep(10)
+            print(f"❌ خطأ في البوت: {e}")
+            print("🔄 إعادة التشغيل بعد 20 ثانية...")
+            time.sleep(20)
+
+def run_flask_server():
+    """تشغيل Flask في thread منفصل"""
+    print("🌐 تشغيل خادم Flask...")
+    app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)
+
+def keep_alive():
+    """إرسال طلبات دورية لإبقاء البوت مستيقظاً"""
+    import requests
+    while True:
+        try:
+            # احصل على رابط التطبيق تلقائياً من متغير البيئة
+            app_url = os.environ.get('RENDER_EXTERNAL_URL', '')
+            if app_url:
+                requests.get(f'{app_url}/health', timeout=10)
+                requests.get(f'{app_url}/keepalive', timeout=10)
+                print("🔄 تم إرسال طلب إبقاء البوت نشط")
+            else:
+                print("⚠️  لم يتم العثور على رابط التطبيق")
+        except Exception as e:
+            print(f"⚠️  فشل في إرسال طلب الإبقاء: {e}")
+        time.sleep(300)  # كل 5 دقائق
 
 if __name__ == "__main__":
-    print("🎯 نظام البوت - الإصدار النهائي")
+    print("🎯 نظام البوت - الإصدار المستقر")
     
-    def run_flask():
-        app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)
-    
+    # تشغيل Flask في thread منفصل
     import threading
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.daemon = True
+    flask_thread = threading.Thread(target=run_flask_server, daemon=True)
     flask_thread.start()
     
+    # تشغيل نظام الإبقاء نشطاً
+    keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
+    keep_alive_thread.start()
+    
+    # انتظار قليل ثم تشغيل البوت
+    time.sleep(8)
+    
+    # تشغيل البوت
     run_bot()
