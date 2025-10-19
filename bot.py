@@ -276,22 +276,16 @@ def send_admin_notification(user, service_type, amount=0):
         print(f"❌ خطأ في إرسال الإشعار: {e}")
 
 # 🎯 الواجهة الرئيسية المحسنة
-@bot.message_handler(commands=['start', 'profile', 'الملف'])
-def handle_start(message):
+def show_main_menu(chat_id, message_id=None, user_id=None):
+    """عرض القائمة الرئيسية - يمكن استخدامها من أي مكان"""
     try:
-        user_id = message.from_user.id
-        print(f"📩 استلام /start من {user_id}")
-        
+        if not user_id:
+            return False
+            
         user_data = get_user(user_id)
-        
-        # تحديث بيانات المستخدم
-        update_user(
-            user_id,
-            first_name=message.from_user.first_name or "",
-            username=message.from_user.username or "",
-            last_activity=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        )
-        
+        if not user_data:
+            return False
+            
         remaining_attempts, total_attempts, extra_attempts = get_remaining_attempts(user_data)
         vip_info = VIP_LEVELS[user_data['vip_level']]
         
@@ -350,17 +344,51 @@ def handle_start(message):
             InlineKeyboardButton("🔄 تحديث البيانات", callback_data="refresh_profile")
         )
         
-        bot.send_message(
-            user_id, 
-            profile_text,
-            parse_mode='Markdown',
-            reply_markup=keyboard
-        )
+        if message_id:
+            # تعديل الرسالة الحالية
+            bot.edit_message_text(
+                profile_text,
+                chat_id=chat_id,
+                message_id=message_id,
+                parse_mode='Markdown',
+                reply_markup=keyboard
+            )
+        else:
+            # إرسال رسالة جديدة
+            bot.send_message(
+                chat_id, 
+                profile_text,
+                parse_mode='Markdown',
+                reply_markup=keyboard
+            )
         
-        print(f"✅ تم إرسال الواجهة المحسنة لـ {user_id}")
+        print(f"✅ تم عرض القائمة الرئيسية لـ {user_id}")
+        return True
         
     except Exception as e:
-        print(f"❌ خطأ في الواجهة المحسنة: {e}")
+        print(f"❌ خطأ في show_main_menu: {e}")
+        return False
+
+@bot.message_handler(commands=['start', 'profile', 'الملف'])
+def handle_start(message):
+    try:
+        user_id = message.from_user.id
+        print(f"📩 استلام /start من {user_id}")
+        
+        user_data = get_user(user_id)
+        
+        # تحديث بيانات المستخدم
+        update_user(
+            user_id,
+            first_name=message.from_user.first_name or "",
+            username=message.from_user.username or "",
+            last_activity=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        )
+        
+        show_main_menu(message.chat.id, user_id=user_id)
+        
+    except Exception as e:
+        print(f"❌ خطأ في handle_start: {e}")
 
 @bot.message_handler(commands=['myid'])
 def handle_myid(message):
@@ -373,15 +401,33 @@ def handle_myid(message):
 @bot.callback_query_handler(func=lambda call: call.data == "start_main")
 def handle_start_button(call):
     try:
-        handle_start(call.message)
+        show_main_menu(call.message.chat.id, call.message.message_id, call.from_user.id)
     except Exception as e:
         print(f"❌ خطأ في زر البدء: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data == "back_to_profile")
+def back_to_profile(call):
+    """العودة للقائمة الرئيسية من أي مكان"""
+    try:
+        show_main_menu(call.message.chat.id, call.message.message_id, call.from_user.id)
+        bot.answer_callback_query(call.id, "✅ تم العودة للرئيسية")
+    except Exception as e:
+        print(f"❌ خطأ في back_to_profile: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data == "refresh_profile")
+def refresh_profile(call):
+    """تحديث البيانات وعرضها من جديد"""
+    try:
+        show_main_menu(call.message.chat.id, call.message.message_id, call.from_user.id)
+        bot.answer_callback_query(call.id, "✅ تم تحديث البيانات")
+    except Exception as e:
+        print(f"❌ خطأ في تحديث البيانات: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data == "games")
 def show_games(call):
     try:
         user = get_user(call.from_user.id)
-        remaining_attempts, total_attempts, extra_attempts = get_remaining_attempts(user)
+        remaining_attempts, total_attempts, _ = get_remaining_attempts(user)
         
         games_text = f"""🎮 **قائمة الألعاب**
 
@@ -407,22 +453,6 @@ def show_games(call):
     except Exception as e:
         print(f"❌ خطأ في show_games: {e}")
 
-@bot.callback_query_handler(func=lambda call: call.data == "back_to_profile")
-def back_to_profile(call):
-    try:
-        handle_start(call.message)
-    except Exception as e:
-        print(f"❌ خطأ في back_to_profile: {e}")
-
-@bot.callback_query_handler(func=lambda call: call.data == "refresh_profile")
-def refresh_profile(call):
-    """تحديث البيانات وعرضها من جديد"""
-    try:
-        handle_start(call.message)
-        bot.answer_callback_query(call.id, "✅ تم تحديث البيانات")
-    except Exception as e:
-        print(f"❌ خطأ في تحديث البيانات: {e}")
-
 @bot.callback_query_handler(func=lambda call: call.data == "daily_bonus")
 def handle_daily_bonus(call):
     """المطالبة بالمكافأة اليومية"""
@@ -433,7 +463,7 @@ def handle_daily_bonus(call):
         if success:
             # تحديث الواجهة بعد أخذ المكافأة
             time.sleep(1)
-            handle_start(call.message)
+            show_main_menu(call.message.chat.id, call.message.message_id, call.from_user.id)
             
     except Exception as e:
         print(f"❌ خطأ في المكافأة اليومية: {e}")
@@ -777,7 +807,7 @@ def play_slot(call):
         
         keyboard = InlineKeyboardMarkup()
         keyboard.add(InlineKeyboardButton("🎰 العب مرة أخرى", callback_data="game_slot"))
-        keyboard.add(InlineKeyboardButton("🔙 رجوع للألعاب", callback_data="games"))
+        keyboard.add(InlineKeyboardButton("🔙 رجوع", callback_data="games"))
         
         bot.edit_message_text(
             game_result, 
@@ -838,7 +868,7 @@ def play_dice(call):
         
         keyboard = InlineKeyboardMarkup()
         keyboard.add(InlineKeyboardButton("🎲 العب مرة أخرى", callback_data="game_dice"))
-        keyboard.add(InlineKeyboardButton("🔙 رجوع للألعاب", callback_data="games"))
+        keyboard.add(InlineKeyboardButton("🔙 رجوع", callback_data="games"))
         
         bot.edit_message_text(
             game_result, 
@@ -850,7 +880,7 @@ def play_dice(call):
     except Exception as e:
         print(f"❌ خطأ في play_dice: {e}")
 
-# 🛠️ الأوامر الإدارية (نفسها موجودة بالكود السابق - محفوظة كما هي)
+# 🛠️ الأوامر الإدارية (محفوظة كما هي)
 @bot.message_handler(commands=['quickadd'])
 def handle_quickadd(message):
     if not is_admin(message.from_user.id):
