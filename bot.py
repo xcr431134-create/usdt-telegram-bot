@@ -1284,33 +1284,43 @@ def health():
     return "✅ OK", 200
 
 def run_bot():
-    """تشغيل البوت مع إصلاح الأخطاء الصامتة"""
-    print("🚀 جاري تشغيل البوت...")
+    """الحل النهائي لمشكلة الـ Conflict"""
+    print("🚀 تشغيل البوت الجديد...")
     
+    # تنظيف كامل
     try:
         bot.delete_webhook()
-        print("✅ تم تنظيف الـ webhook")
-        time.sleep(2)
+        print("✅ تنظيف الـ webhook")
+        time.sleep(8)  # انتظار أطول
     except:
         pass
+    
+    # تأكد من عدم وجود نسخ شغالة
+    import requests
+    try:
+        response = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getMe", timeout=5)
+        if response.status_code == 200:
+            print("✅ التوكن شغال والسيرفر متصل")
+    except:
+        print("❌ مشكلة في الاتصال")
     
     if not init_database():
         print("⚠️  تم المتابعة بدون قاعدة البيانات")
     
-    print("🔄 بدء استقبال الرسائل...")
+    print("🔄 بدء التشغيل الحصري...")
     
     while True:
         try:
-            # إعدادات مضمونة
-            bot.polling(
-                none_stop=True,
-                timeout=25,
+            # التشغيل الحصري
+            bot.infinity_polling(
+                timeout=20,
+                long_polling_timeout=10,
                 skip_pending=True
             )
         except Exception as e:
-            print(f"❌ خطأ واضح: {e}")
-            print("🔄 إعادة التشغيل بعد 5 ثواني...")
-            time.sleep(5)
+            print(f"❌ خطأ: {e}")
+            print("🔄 إعادة التشغيل بعد 15 ثانية...")
+            time.sleep(15)
         except:
             print("🔥 خطأ صامت - إعادة التشغيل...")
             time.sleep(5)
