@@ -8,7 +8,6 @@ from datetime import datetime, timedelta
 import time
 from flask import Flask
 import logging
-import requests
 
 # ✅ تفعيل السجلات المفصلة
 logging.basicConfig(
@@ -312,40 +311,42 @@ def get_user_profile(user_id, first_name="", username=""):
 
 @bot.message_handler(commands=['start', 'profile', 'الملف'])
 def handle_start(message):
-    user_info = f"{message.from_user.first_name} (ID: {message.from_user.id})"
-    print(f"📩 استلام /start من {user_info}")
-    
     try:
-        # أولاً أرسل رسالة بسيطة للتأكد من الإرسال
-        bot.send_message(message.chat.id, "🎯 جاري تحميل بياناتك...")
+        user_id = message.from_user.id
+        print(f"📩 استلام /start من {user_id}")
         
-        profile_text = get_user_profile(
-            message.from_user.id,
-            message.from_user.first_name,
-            message.from_user.username or ""
-        )
+        # إنشاء المستخدم أولاً
+        user_data = get_user(user_id)
         
-        keyboard = InlineKeyboardMarkup(row_width=2)
-        keyboard.add(
-            InlineKeyboardButton("🎮 الألعاب", callback_data="games"),
-            InlineKeyboardButton("💎 خدمات VIP", callback_data="vip_services"),
-            InlineKeyboardButton("🎯 رابط الاحالات", callback_data="referral"),
-            InlineKeyboardButton("💰 السحب", callback_data="withdraw")
-        )
-        keyboard.add(
-            InlineKeyboardButton("🆘 الدعم الفني", url="https://t.me/Trust_wallet_Support_4")
-        )
-        
+        # إرسال الرسالة الرئيسية
         bot.send_message(
-            message.chat.id, 
-            profile_text, 
+            user_id, 
+            f"🎯 **مرحباً بك!**\n\n"
+            f"👤 {message.from_user.first_name or 'مستخدم'}\n"
+            f"🆔 {user_id}\n"
+            f"💰 الرصيد: {user_data['balance']:.2f} USDT\n\n"
+            f"اختر من القائمة:",
             parse_mode='Markdown',
-            reply_markup=keyboard
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton("🎮 الألعاب", callback_data="games"),
+                        InlineKeyboardButton("💎 خدمات VIP", callback_data="vip_services")
+                    ],
+                    [
+                        InlineKeyboardButton("🎯 رابط الاحالات", callback_data="referral"),
+                        InlineKeyboardButton("💰 السحب", callback_data="withdraw")
+                    ],
+                    [
+                        InlineKeyboardButton("🆘 الدعم الفني", url="https://t.me/Trust_wallet_Support_4")
+                    ]
+                ]
+            )
         )
-        print(f"✅ تم الرد على {user_info}")
+        print(f"✅ تم الرد على {user_id}")
         
     except Exception as e:
-        print(f"❌ فشل في معالجة /start: {e}")
+        print(f"❌ خطأ في /start: {e}")
         try:
             bot.send_message(message.chat.id, "❌ حدث خطأ، يرجى المحاولة لاحقاً")
         except:
