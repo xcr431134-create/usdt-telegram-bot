@@ -1427,19 +1427,21 @@ def keep_alive():
         time.sleep(300)  # كل 5 دقائق
 
 if __name__ == "__main__":
-    print("🎯 نظام البوت - الإصدار المستقر مع MongoDB")
+    print("🚀 بدء التشغيل المباشر للبوت...")
     
-    # تشغيل Flask في thread منفصل
-    import threading
-    flask_thread = threading.Thread(target=run_flask_server, daemon=True)
-    flask_thread.start()
+    # تأكد من الاتصال بقاعدة البيانات أولاً
+    try:
+        client = MongoClient(MONGO_URI)
+        db = client['usdt_bot']
+        users_collection = db['users']
+        print("✅ تم الاتصال بـ MongoDB بنجاح")
+    except Exception as e:
+        print(f"❌ خطأ في الاتصال: {e}")
+        exit(1)
     
-    # تشغيل نظام الإبقاء نشطاً
-    keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
-    keep_alive_thread.start()
-    
-    # انتظار قليل ثم تشغيل البوت
-    time.sleep(8)
-    
-    # تشغيل البوت
-    run_bot()
+    # تشغيل البوت مباشرة
+    try:
+        print("🤖 البوت يعمل الآن...")
+        bot.infinity_polling()
+    except Exception as e:
+        print(f"❌ خطأ في البوت: {e}")
