@@ -1,6 +1,5 @@
 import os
 import telebot
-import sqlite3
 import random
 import threading
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -9,15 +8,29 @@ import time
 from flask import Flask
 import logging
 import requests
+from pymongo import MongoClient
+from bson import ObjectId
 
 # ✅ تفعيل السجلات
 logging.basicConfig(level=logging.INFO)
-print("🚀 بدء تشغيل البوت...")
+print("🚀 بدء تشغيل البوت مع MongoDB...")
 
 # فحص BOT_TOKEN
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 if not BOT_TOKEN:
     print("❌ BOT_TOKEN غير موجود!")
+    exit(1)
+
+# 🔗 اتصال MongoDB
+MONGO_URI = os.environ.get('MONGO_URI', 'mongodb+srv://telegram_bot_user:P8zc2s251FsZFv3X@cluster0.tyuqdos.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0')
+
+try:
+    client = MongoClient(MONGO_URI)
+    db = client['usdt_bot']
+    users_collection = db['users']
+    print("✅ تم الاتصال بـ MongoDB بنجاح")
+except Exception as e:
+    print(f"❌ خطأ في الاتصال بـ MongoDB: {e}")
     exit(1)
 
 # تعريف البوت
@@ -30,10 +43,6 @@ YOUR_USER_ID = 8400225549  # آيديك الخاص
 def is_admin(user_id):
     return user_id in ADMIN_IDS
 
-# 🗄️ قاعدة البيانات
-DB_FILE = 'usdt_bot.db'
-db_lock = threading.Lock()
-
 # مستويات VIP
 VIP_LEVELS = {
     0: {"name": "🟢 مبتدئ", "daily_bonus": 0.8, "max_attempts": 3, "price": 0},
@@ -43,129 +52,69 @@ VIP_LEVELS = {
 }
 
 def init_database():
+    """تهيئة قاعدة البيانات - MongoDB لا تحتاج لتهيئة"""
     try:
-        conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id TEXT PRIMARY KEY,
-                username TEXT,
-                first_name TEXT,
-                balance REAL DEFAULT 0.75,
-                referral_count INTEGER DEFAULT 0,
-                new_referrals INTEGER DEFAULT 0,
-                vip_level INTEGER DEFAULT 0,
-                attempts INTEGER DEFAULT 3,
-                total_earnings REAL DEFAULT 0.75,
-                total_deposits REAL DEFAULT 0.0,
-                registration_date TEXT,
-                last_activity TEXT,
-                last_mining_date TEXT,
-                withdrawal_address TEXT,
-                games_played_today INTEGER DEFAULT 0,
-                last_reset_date TEXT,
-                has_deposit INTEGER DEFAULT 0
-            )
-        """)
-        conn.commit()
-        conn.close()
-        print("✅ تم تهيئة قاعدة البيانات")
+        # التحقق من الاتصال
+        users_collection.find_one()
+        print("✅ قاعدة البيانات جاهزة")
         return True
     except Exception as e:
         print(f"❌ خطأ في قاعدة البيانات: {e}")
         return False
 
 def get_user(user_id):
+    """جلب بيانات المستخدم من MongoDB"""
     user_id_str = str(user_id)
-    with db_lock:
-        try:
-            conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id_str,))
-            user_data = cursor.fetchone()
+    try:
+        user_data = users_collection.find_one({"user_id": user_id_str})
+        
+        if user_data:
+            # إزالة _id من البيانات
+            user_data.pop('_id', None)
+            return user_data
+        else:
+            # إنشاء مستخدم جديد
+            new_user = {
+                'user_id': user_id_str,
+                'username': "",
+                'first_name': "",
+                'balance': 0.75,
+                'referral_count': 0,
+                'new_referrals': 0,
+                'vip_level': 0,
+                'attempts': 3,
+                'total_earnings': 0.75,
+                'total_deposits': 0.0,
+                'registration_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'last_activity': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'last_mining_date': None,
+                'withdrawal_address': "",
+                'games_played_today': 0,
+                'last_reset_date': datetime.now().strftime('%Y-%m-%d'),
+                'has_deposit': 0
+            }
+            users_collection.insert_one(new_user)
+            return new_user
             
-            if user_data:
-                user_dict = {
-                    'user_id': user_data[0],
-                    'username': user_data[1],
-                    'first_name': user_data[2],
-                    'balance': user_data[3],
-                    'referral_count': user_data[4],
-                    'new_referrals': user_data[5],
-                    'vip_level': user_data[6],
-                    'attempts': user_data[7],
-                    'total_earnings': user_data[8],
-                    'total_deposits': user_data[9],
-                    'registration_date': user_data[10],
-                    'last_activity': user_data[11],
-                    'last_mining_date': user_data[12],
-                    'withdrawal_address': user_data[13],
-                    'games_played_today': user_data[14],
-                    'last_reset_date': user_data[15],
-                    'has_deposit': user_data[16]
-                }
-                conn.close()
-                return user_dict
-            else:
-                # إنشاء مستخدم جديد
-                new_user = {
-                    'user_id': user_id_str,
-                    'username': "",
-                    'first_name': "",
-                    'balance': 0.75,
-                    'referral_count': 0,
-                    'new_referrals': 0,
-                    'vip_level': 0,
-                    'attempts': 3,
-                    'total_earnings': 0.75,
-                    'total_deposits': 0.0,
-                    'registration_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'last_activity': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'last_mining_date': None,
-                    'withdrawal_address': "",
-                    'games_played_today': 0,
-                    'last_reset_date': datetime.now().strftime('%Y-%m-%d'),
-                    'has_deposit': 0
-                }
-                cursor.execute("""
-                    INSERT INTO users VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    new_user['user_id'], new_user['username'], new_user['first_name'],
-                    new_user['balance'], new_user['referral_count'], new_user['new_referrals'],
-                    new_user['vip_level'], new_user['attempts'], new_user['total_earnings'],
-                    new_user['total_deposits'], new_user['registration_date'],
-                    new_user['last_activity'], new_user['last_mining_date'],
-                    new_user['withdrawal_address'], new_user['games_played_today'],
-                    new_user['last_reset_date'], new_user['has_deposit']
-                ))
-                conn.commit()
-                conn.close()
-                return new_user
-                
-        except Exception as e:
-            print(f"❌ خطأ في جلب المستخدم: {e}")
-            return None
+    except Exception as e:
+        print(f"❌ خطأ في جلب المستخدم: {e}")
+        return None
 
 def update_user(user_id, **kwargs):
+    """تحديث بيانات المستخدم في MongoDB"""
     try:
-        user = get_user(user_id)
-        if not user:
-            return False
-            
-        conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-        cursor = conn.cursor()
-        
-        set_clause = ", ".join([f"{key} = ?" for key in kwargs.keys()])
-        values = list(kwargs.values())
-        values.append(user_id)
-        
-        cursor.execute(f"UPDATE users SET {set_clause} WHERE user_id = ?", values)
-        conn.commit()
-        conn.close()
+        user_id_str = str(user_id)
+        users_collection.update_one(
+            {"user_id": user_id_str},
+            {"$set": kwargs}
+        )
         return True
     except Exception as e:
         print(f"❌ خطأ في تحديث المستخدم: {e}")
         return False
+
+# ⚠️ ⚠️ ⚠️ كل الدوال الأخرى تبقى كما هي بدون أي تغيير ⚠️ ⚠️ ⚠️
+# جميع الدوال التالية محفوظة بنفس الشكل بالضبط:
 
 def get_remaining_attempts(user):
     base_attempts = VIP_LEVELS[user['vip_level']]['max_attempts']
@@ -275,7 +224,7 @@ def send_admin_notification(user, service_type, amount=0):
     except Exception as e:
         print(f"❌ خطأ في إرسال الإشعار: {e}")
 
-# 🎯 الواجهة الرئيسية المحسنة
+# 🎯 الواجهة الرئيسية المحسنة - نفس الكود بالضبط
 def show_main_menu(chat_id, message_id=None, user_id=None):
     """عرض القائمة الرئيسية - يمكن استخدامها من أي مكان"""
     try:
@@ -369,6 +318,7 @@ def show_main_menu(chat_id, message_id=None, user_id=None):
         print(f"❌ خطأ في show_main_menu: {e}")
         return False
 
+# جميع ال handlers تبقى كما هي بدون تغيير
 @bot.message_handler(commands=['start', 'profile', 'الملف'])
 def handle_start(message):
     try:
@@ -397,7 +347,7 @@ def handle_myid(message):
     except Exception as e:
         print(f"❌ خطأ في /myid: {e}")
 
-# 🎮 معالجة الأزرار
+# 🎮 معالجة الأزرار - كلها تبقى كما هي
 @bot.callback_query_handler(func=lambda call: call.data == "start_main")
 def handle_start_button(call):
     try:
@@ -1207,14 +1157,8 @@ def handle_listusers(message):
         return
     
     try:
-        conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) as total FROM users")
-        total_users = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT user_id, first_name, balance, vip_level, registration_date FROM users ORDER BY registration_date DESC LIMIT 20")
-        users = cursor.fetchall()
-        conn.close()
+        total_users = users_collection.count_documents({})
+        users = list(users_collection.find().sort("registration_date", -1).limit(20))
         
         if not users:
             bot.send_message(message.chat.id, "❌ لا يوجد مستخدمين!")
@@ -1223,9 +1167,9 @@ def handle_listusers(message):
         users_msg = f"👥 **قائمة المستخدمين** (آخر 20 من أصل {total_users}):\n\n"
         
         for i, user in enumerate(users, 1):
-            vip_name = VIP_LEVELS[user[3]]['name']
-            users_msg += f"{i}. {user[1] or 'غير معروف'} (ID: {user[0]})\n"
-            users_msg += f"   💰 {user[2]:.2f} USDT | {vip_name} | {user[4][:10]}\n\n"
+            vip_name = VIP_LEVELS[user['vip_level']]['name']
+            users_msg += f"{i}. {user['first_name'] or 'غير معروف'} (ID: {user['user_id']})\n"
+            users_msg += f"   💰 {user['balance']:.2f} USDT | {vip_name} | {user['registration_date'][:10]}\n\n"
         
         bot.send_message(message.chat.id, users_msg, parse_mode='Markdown')
         
@@ -1239,28 +1183,35 @@ def handle_stats(message):
         return
     
     try:
-        conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-        cursor = conn.cursor()
+        pipeline = [
+            {
+                "$group": {
+                    "_id": None,
+                    "total_balance": {"$sum": "$balance"},
+                    "total_earnings": {"$sum": "$total_earnings"},
+                    "total_deposits": {"$sum": "$total_deposits"},
+                    "total_referrals": {"$sum": "$referral_count"},
+                    "total_users": {"$sum": 1}
+                }
+            }
+        ]
         
-        cursor.execute("SELECT COUNT(*) as total_users FROM users")
-        total_users = cursor.fetchone()[0]
+        stats = list(users_collection.aggregate(pipeline))
         
-        cursor.execute("SELECT SUM(balance) as total_balance FROM users")
-        total_balance = cursor.fetchone()[0] or 0
+        if stats:
+            stats_data = stats[0]
+            total_users = stats_data['total_users']
+            total_balance = stats_data['total_balance']
+            total_earnings = stats_data['total_earnings']
+            total_deposits = stats_data['total_deposits']
+            total_referrals = stats_data['total_referrals']
+        else:
+            total_users = total_balance = total_earnings = total_deposits = total_referrals = 0
         
-        cursor.execute("SELECT SUM(total_earnings) as total_earnings FROM users")
-        total_earnings = cursor.fetchone()[0] or 0
-        
-        cursor.execute("SELECT SUM(total_deposits) as total_deposits FROM users")
-        total_deposits = cursor.fetchone()[0] or 0
-        
-        cursor.execute("SELECT SUM(referral_count) as total_referrals FROM users")
-        total_referrals = cursor.fetchone()[0] or 0
-        
-        cursor.execute("SELECT vip_level, COUNT(*) as count FROM users GROUP BY vip_level")
-        vip_stats = cursor.fetchall()
-        
-        conn.close()
+        # إحصائيات VIP
+        vip_stats = list(users_collection.aggregate([
+            {"$group": {"_id": "$vip_level", "count": {"$sum": 1}}}
+        ]))
         
         stats_msg = "📊 **إحصائيات البوت:**\n\n"
         stats_msg += f"👥 **إجمالي المستخدمين:** {total_users}\n"
@@ -1270,9 +1221,9 @@ def handle_stats(message):
         stats_msg += f"👥 **إجمالي الإحالات:** {total_referrals}\n\n"
         
         stats_msg += "🏆 **توزيع مستويات VIP:**\n"
-        for level, count in vip_stats:
-            vip_name = VIP_LEVELS[level]['name']
-            stats_msg += f"{vip_name}: {count} مستخدم\n"
+        for stat in vip_stats:
+            vip_name = VIP_LEVELS[stat['_id']]['name']
+            stats_msg += f"{vip_name}: {stat['count']} مستخدم\n"
         
         bot.send_message(message.chat.id, stats_msg, parse_mode='Markdown')
         
@@ -1476,7 +1427,7 @@ def keep_alive():
         time.sleep(300)  # كل 5 دقائق
 
 if __name__ == "__main__":
-    print("🎯 نظام البوت - الإصدار المستقر")
+    print("🎯 نظام البوت - الإصدار المستقر مع MongoDB")
     
     # تشغيل Flask في thread منفصل
     import threading
