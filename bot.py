@@ -1385,66 +1385,100 @@ def self_health_check():
             os.execv(sys.executable, ['python'] + sys.argv)
 
 from flask import Flask, request
+import threading
+import time
+import requests
+import os
 
 app = Flask(__name__)
 
+# 🔄 نظام الإبقاء على الخدمة نشطة
+def keep_service_alive():
+    """يبعت طلبات مستمرة عشان Render ما يوقف الخدمة"""
+    while True:
+        try:
+            # طلب لخادمنا نفسه
+            response = requests.get('https://usdt-telegram-bot-8t4a.onrender.com/', timeout=10)
+            print(f"✅ Keep-alive ping: {response.status_code} - {time.strftime('%H:%M:%S')}")
+        except Exception as e:
+            print(f"❌ Keep-alive failed: {e}")
+        
+        # بين كل طلب وآخر - 8 دقائق (أقل من 15 دقيقة)
+        time.sleep(480)
+
+# 🔧 نظام إعادة تعيين الويب هوك
+def reset_webhook_periodically():
+    """يعيد تعيين الويب هوك كل 10 دقائق"""
+    while True:
+        try:
+            bot.remove_webhook()
+            time.sleep(1)
+            webhook_url = "https://usdt-telegram-bot-8t4a.onrender.com/webhook"
+            bot.set_webhook(url=webhook_url)
+            print(f"🔄 Webhook reset at {time.strftime('%H:%M:%S')}")
+        except Exception as e:
+            print(f"❌ Webhook reset failed: {e}")
+        
+        time.sleep(600)  # كل 10 دقائق
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    """استقبال الرسائل من تليجرام"""
+    try:
+        if request.method == 'POST':
+            json_string = request.get_data().decode('utf-8')
+            update = telebot.types.Update.de_json(json_string)
+            bot.process_new_updates([update])
+    except Exception as e:
+        print(f"❌ Webhook processing error: {e}")
+    
+    return 'OK', 200
+
 @app.route('/')
 def home():
-    return "🤖 البوت شغال بشكل مستمر على Render!"
+    return "🤖 البوت شغال بشكل مستمر! 🟢"
 
-@app.route('/webhook/' + BOT_TOKEN, methods=['POST'])
-def webhook():
-    if request.method == 'POST':
-        json_string = request.get_data().decode('utf-8')
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return 'OK', 200
-    return 'Hello!', 200
+@app.route('/health')
+def health():
+    return "✅ البوت بصحة جيدة"
 
-@app.route('/set_webhook')
-def set_webhook():
+@app.route('/restart-webhook')
+def restart_webhook():
+    """إعادة تعيين الويب هوك يدوياً"""
     try:
-        # إزالة الويب هوك القديم
         bot.remove_webhook()
         time.sleep(1)
-        
-        # استخدام رابطك المباشر
-        webhook_url = f"https://usdt-telegram-bot-8t4a.onrender.com/webhook/{BOT_TOKEN}"
-        
-        # تعيين الويب هوك الجديد
+        webhook_url = "https://usdt-telegram-bot-8t4a.onrender.com/webhook"
         result = bot.set_webhook(url=webhook_url)
-        return f"✅ <b>تم تعيين الويب هوك بنجاح!</b><br>📎 <b>الرابط:</b> {webhook_url}<br>🎯 <b>النتيجة:</b> {result}"
+        return f"✅ تم إعادة تعيين الويب هوك: {result}"
     except Exception as e:
-        return f"❌ <b>خطأ في تعيين الويب هوك:</b> {e}"
+        return f"❌ فشل إعادة التعيين: {e}"
 
-@app.route('/delete_webhook')
-def delete_webhook():
-    try:
-        result = bot.remove_webhook()
-        return f"✅ <b>تم حذف الويب هوك:</b> {result}"
-    except Exception as e:
-        return f"❌ <b>خطأ في حذف الويب هوك:</b> {e}"
-
-# تشغيل الخادم
 if __name__ == '__main__':
-    print("🚀 بدء تشغيل البوت بنظام Webhooks المستقر...")
+    print("🚀 بدء تشغيل البوت مع نظام الحماية المتكامل...")
     
-    # تعيين الويب هوك تلقائياً عند التشغيل
+    # 🔄 تعيين الويب هوك الأولي
     try:
         bot.remove_webhook()
         time.sleep(2)
-        
-        # استخدام رابطك المباشر
-        webhook_url = f"https://usdt-telegram-bot-8t4a.onrender.com/webhook/{BOT_TOKEN}"
-        
+        webhook_url = "https://usdt-telegram-bot-8t4a.onrender.com/webhook"
         bot.set_webhook(url=webhook_url)
-        print(f"✅ تم تعيين الويب هوك تلقائياً: {webhook_url}")
-        print("🎯 البوت جاهز لاستقبال الرسائل عبر Webhooks!")
-        
+        print(f"✅ الويب هوك معين: {webhook_url}")
     except Exception as e:
-        print(f"⚠️  لم يتم تعيين الويب هوك تلقائياً: {e}")
-        print("🔧 يمكنك تعيينه يدوياً عبر: https://usdt-telegram-bot-8t4a.onrender.com/set_webhook")
+        print(f"❌ فشل تعيين الويب هوك: {e}")
     
-    # تشغيل خادم Flask
+    # 🎯 تشغيل أنظمة الخلفية
+    # 1. نظام الإبقاء على الخدمة
+    keep_alive_thread = threading.Thread(target=keep_service_alive, daemon=True)
+    keep_alive_thread.start()
+    
+    # 2. نظام إعادة تعيين الويب هوك
+    webhook_reset_thread = threading.Thread(target=reset_webhook_periodically, daemon=True)
+    webhook_reset_thread.start()
+    
+    print("🎯 جميع أنظمة الحماية شغالة!")
+    print("📞 البوت جاهز لاستقبال الرسائل...")
+    
+    # تشغيل الخادم
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port, debug=False)
