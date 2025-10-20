@@ -1408,9 +1408,8 @@ def set_webhook():
         bot.remove_webhook()
         time.sleep(1)
         
-        # الحصول على عنوان URL التلقائي من Render
-        render_url = os.environ.get('RENDER_EXTERNAL_URL', 'your-app-name.onrender.com')
-        webhook_url = f"https://{render_url}/webhook/{BOT_TOKEN}"
+        # استخدام رابطك المباشر
+        webhook_url = f"https://usdt-telegram-bot-8t4a.onrender.com/webhook/{BOT_TOKEN}"
         
         # تعيين الويب هوك الجديد
         result = bot.set_webhook(url=webhook_url)
@@ -1435,9 +1434,8 @@ if __name__ == '__main__':
         bot.remove_webhook()
         time.sleep(2)
         
-        # استخدام عنوان Render التلقائي
-        render_url = os.environ.get('RENDER_EXTERNAL_URL', 'your-app-name.onrender.com')
-        webhook_url = f"https://{render_url}/webhook/{BOT_TOKEN}"
+        # استخدام رابطك المباشر
+        webhook_url = f"https://usdt-telegram-bot-8t4a.onrender.com/webhook/{BOT_TOKEN}"
         
         bot.set_webhook(url=webhook_url)
         print(f"✅ تم تعيين الويب هوك تلقائياً: {webhook_url}")
@@ -1445,7 +1443,7 @@ if __name__ == '__main__':
         
     except Exception as e:
         print(f"⚠️  لم يتم تعيين الويب هوك تلقائياً: {e}")
-        print("🔧 يمكنك تعيينه يدوياً عبر: /set_webhook")
+        print("🔧 يمكنك تعيينه يدوياً عبر: https://usdt-telegram-bot-8t4a.onrender.com/set_webhook")
     
     # تشغيل خادم Flask
     port = int(os.environ.get("PORT", 8080))
