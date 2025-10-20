@@ -1453,32 +1453,47 @@ def restart_webhook():
         return f"✅ تم إعادة تعيين الويب هوك: {result}"
     except Exception as e:
         return f"❌ فشل إعادة التعيين: {e}"
+from flask import Flask, request
+import time
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "🤖 Bot is LIVE - " + str(time.time())
+
+@app.route('/health')
+def health():
+    return "✅ HEALTHY"
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    try:
+        json_data = request.get_json()
+        update = telebot.types.Update.de_json(json_data)
+        bot.process_new_updates([update])
+        return 'OK'
+    except Exception as e:
+        print(f"❌ Webhook error: {e}")
+        return 'OK'
+
+@app.route('/test')
+def test():
+    return "🧪 Test endpoint working!"
 
 if __name__ == '__main__':
-    print("🚀 بدء تشغيل البوت مع نظام الحماية المتكامل...")
+    print("🔍 DEBUG: Starting Flask app...")
     
-    # 🔄 تعيين الويب هوك الأولي
     try:
+        # محاولة بسيطة لتعيين الويب هوك
         bot.remove_webhook()
         time.sleep(2)
         webhook_url = "https://usdt-telegram-bot-8t4a.onrender.com/webhook"
-        bot.set_webhook(url=webhook_url)
-        print(f"✅ الويب هوك معين: {webhook_url}")
+        result = bot.set_webhook(url=webhook_url)
+        print(f"🔍 DEBUG: Webhook result: {result}")
     except Exception as e:
-        print(f"❌ فشل تعيين الويب هوك: {e}")
+        print(f"🔍 DEBUG: Webhook setup failed: {e}")
     
-    # 🎯 تشغيل أنظمة الخلفية
-    # 1. نظام الإبقاء على الخدمة
-    keep_alive_thread = threading.Thread(target=keep_service_alive, daemon=True)
-    keep_alive_thread.start()
-    
-    # 2. نظام إعادة تعيين الويب هوك
-    webhook_reset_thread = threading.Thread(target=reset_webhook_periodically, daemon=True)
-    webhook_reset_thread.start()
-    
-    print("🎯 جميع أنظمة الحماية شغالة!")
-    print("📞 البوت جاهز لاستقبال الرسائل...")
-    
-    # تشغيل الخادم
     port = int(os.environ.get("PORT", 8080))
+    print(f"🔍 DEBUG: Starting on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
