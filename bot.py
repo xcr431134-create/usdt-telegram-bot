@@ -1387,113 +1387,44 @@ def self_health_check():
 from flask import Flask, request
 import threading
 import time
-import requests
+from flask import Flask, request
+import time
 import os
 
 app = Flask(__name__)
 
-# 🔄 نظام الإبقاء على الخدمة نشطة
-def keep_service_alive():
-    """يبعت طلبات مستمرة عشان Render ما يوقف الخدمة"""
-    while True:
-        try:
-            # طلب لخادمنا نفسه
-            response = requests.get('https://usdt-telegram-bot-8t4a.onrender.com/', timeout=10)
-            print(f"✅ Keep-alive ping: {response.status_code} - {time.strftime('%H:%M:%S')}")
-        except Exception as e:
-            print(f"❌ Keep-alive failed: {e}")
-        
-        # بين كل طلب وآخر - 8 دقائق (أقل من 15 دقيقة)
-        time.sleep(480)
-
-# 🔧 نظام إعادة تعيين الويب هوك
-def reset_webhook_periodically():
-    """يعيد تعيين الويب هوك كل 10 دقائق"""
-    while True:
-        try:
-            bot.remove_webhook()
-            time.sleep(1)
-            webhook_url = "https://usdt-telegram-bot-8t4a.onrender.com/webhook"
-            bot.set_webhook(url=webhook_url)
-            print(f"🔄 Webhook reset at {time.strftime('%H:%M:%S')}")
-        except Exception as e:
-            print(f"❌ Webhook reset failed: {e}")
-        
-        time.sleep(600)  # كل 10 دقائق
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    """استقبال الرسائل من تليجرام"""
-    try:
-        if request.method == 'POST':
-            json_string = request.get_data().decode('utf-8')
-            update = telebot.types.Update.de_json(json_string)
-            bot.process_new_updates([update])
-    except Exception as e:
-        print(f"❌ Webhook processing error: {e}")
-    
-    return 'OK', 200
-
 @app.route('/')
 def home():
-    return "🤖 البوت شغال بشكل مستمر! 🟢"
-
-@app.route('/health')
-def health():
-    return "✅ البوت بصحة جيدة"
-
-@app.route('/restart-webhook')
-def restart_webhook():
-    """إعادة تعيين الويب هوك يدوياً"""
-    try:
-        bot.remove_webhook()
-        time.sleep(1)
-        webhook_url = "https://usdt-telegram-bot-8t4a.onrender.com/webhook"
-        result = bot.set_webhook(url=webhook_url)
-        return f"✅ تم إعادة تعيين الويب هوك: {result}"
-    except Exception as e:
-        return f"❌ فشل إعادة التعيين: {e}"
-from flask import Flask, request
-import time
-
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "🤖 Bot is LIVE - " + str(time.time())
-
-@app.route('/health')
-def health():
-    return "✅ HEALTHY"
+    return "✅ Bot LIVE - " + time.strftime("%Y-%m-%d %H:%M:%S")
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        json_data = request.get_json()
-        update = telebot.types.Update.de_json(json_data)
+        update = telebot.types.Update.de_json(request.get_json())
         bot.process_new_updates([update])
-        return 'OK'
+        print("📩 Message processed")
     except Exception as e:
         print(f"❌ Webhook error: {e}")
-        return 'OK'
+    return 'OK'
 
-@app.route('/test')
-def test():
-    return "🧪 Test endpoint working!"
+@app.route('/ping')
+def ping():
+    return "🏓 Pong - " + time.strftime("%H:%M:%S")
 
 if __name__ == '__main__':
-    print("🔍 DEBUG: Starting Flask app...")
+    print("🚀 Starting Bot with Simple Setup...")
     
+    # تنظيف وتعيين الويب هوك
     try:
-        # محاولة بسيطة لتعيين الويب هوك
         bot.remove_webhook()
-        time.sleep(2)
-        webhook_url = "https://usdt-telegram-bot-8t4a.onrender.com/webhook"
-        result = bot.set_webhook(url=webhook_url)
-        print(f"🔍 DEBUG: Webhook result: {result}")
+        time.sleep(3)
+        webhook_url = f"https://{os.environ.get('RENDER_EXTERNAL_URL', 'usdt-telegram-bot-8t4a.onrender.com')}/webhook"
+        success = bot.set_webhook(url=webhook_url)
+        print(f"✅ Webhook: {webhook_url} - Success: {success}")
     except Exception as e:
-        print(f"🔍 DEBUG: Webhook setup failed: {e}")
+        print(f"❌ Webhook setup failed: {e}")
     
+    # تشغيل الخادم
     port = int(os.environ.get("PORT", 8080))
-    print(f"🔍 DEBUG: Starting on port {port}")
+    print(f"🔧 Starting on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
