@@ -1332,28 +1332,13 @@ def handle_stats(message):
     except Exception as e:
         bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
 
-# 🔧 نظام التشغيل المقاوم للتوقف
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "🤖 Bot is Running - " + datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-@app.route('/health')
-def health():
-    return "✅ OK", 200
-
-@app.route('/restart')
-def restart():
-    # إعادة تشغيل تلقائية عند الطلب
-    return "🔄 Restarting...", 200
-
 def run_bot_with_restart():
     """تشغيل البوت مع إعادة اتصال مستمرة"""
     while True:
         try:
             print(f"🚀 Starting Bot at {datetime.now().strftime('%H:%M:%S')}")
-            bot.infinity_polling(timeout=60, long_polling_timeout=30, restart_on_change=True)
+            # إزالة restart_on_change علشان ما تحتاج watchdog
+            bot.infinity_polling(timeout=60, long_polling_timeout=30)
             
         except Exception as e:
             print(f"❌ Bot crashed: {e}")
@@ -1366,7 +1351,7 @@ def run_bot_with_restart():
                 pass
             
             # إعادة تشغيل سريعة
-            time.sleep(3)
+            time.sleep(5)
 
 if __name__ == "__main__":
     print("🎯 Bot Starting with Auto-Restart...")
