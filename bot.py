@@ -1373,21 +1373,68 @@ def set_webhook():
     except Exception as e:
         return f"❌ خطأ في تعيين الويب هوك: {e}"
 
+from flask import Flask, request
+import threading
+import time
+import requests
+
+app = Flask(__name__)
+
+# 🔄 نظام الإبقاء على الخدمة نشطة
+def keep_alive():
+    """يبعت طلبات مستمرة كل 10 دقائق"""
+    while True:
+        try:
+            response = requests.get('https://usdt-telegram-bot-8t4a.onrender.com/', timeout=10)
+            print(f"✅ Keep-alive: {response.status_code} - {time.strftime('%H:%M:%S')}")
+        except Exception as e:
+            print(f"❌ Keep-alive failed: {e}")
+        time.sleep(600)  # كل 10 دقائق
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    """استقبال الرسائل من تليجرام"""
+    try:
+        json_data = request.get_json()
+        update = telebot.types.Update.de_json(json_data)
+        bot.process_new_updates([update])
+        print(f"📩 Processed message at {time.strftime('%H:%M:%S')}")
+    except Exception as e:
+        print(f"❌ Webhook error: {e}")
+    return 'OK'
+
+@app.route('/')
+def home():
+    return "🤖 البوت شغال - " + time.strftime("%Y-%m-%d %H:%M:%S")
+
+@app.route('/ping')
+def ping():
+    return "🏓 Pong - " + time.strftime("%H:%M:%S")
+
+@app.route('/auto-ping')
+def auto_ping():
+    """رابط تلقائي للإبقاء على الخدمة"""
+    return "✅ Auto-ping at " + time.strftime("%H:%M:%S")
+
 if __name__ == '__main__':
-    print("🚀 بدء تشغيل البوت بنظام ويب هوك مبسط...")
+    print("🚀 بدء تشغيل البوت بنظام الإبقاء النشط...")
     
-    # تعيين الويب هوك تلقائياً
+    # 1. تعيين الويب هوك
     try:
         bot.remove_webhook()
-        time.sleep(3)
+        time.sleep(2)
         webhook_url = "https://usdt-telegram-bot-8t4a.onrender.com/webhook"
-        success = bot.set_webhook(url=webhook_url)
-        print(f"✅ تم تعيين الويب هوك: {webhook_url}")
-        print(f"🎯 نجاح التعيين: {success}")
+        bot.set_webhook(url=webhook_url)
+        print(f"✅ Webhook set: {webhook_url}")
     except Exception as e:
-        print(f"❌ فشل تعيين الويب هوك: {e}")
+        print(f"❌ Webhook setup failed: {e}")
     
-    # تشغيل الخادم
+    # 2. تشغيل نظام الإبقاء النشط
+    keep_thread = threading.Thread(target=keep_alive, daemon=True)
+    keep_thread.start()
+    print("✅ Keep-alive system started")
+    
+    # 3. تشغيل الخادم
     port = int(os.environ.get("PORT", 8080))
-    print(f"🔧 تشغيل الخادم على المنفذ: {port}")
+    print(f"🔧 Server running on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
