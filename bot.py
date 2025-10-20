@@ -1332,28 +1332,71 @@ def handle_stats(message):
     except Exception as e:
         bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
 
-# 🔧 نظام التشغيل السريع
+# 🔧 نظام التشغيل المحسن لـ Render
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "🤖 Bot is running! Send /start to begin"
+    return "🤖 Bot is Running - " + datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
 @app.route('/health')
 def health():
     return "✅ OK", 200
 
+@app.route('/keepalive')
+def keepalive():
+    return "🔄 Bot active", 200
+
+import requests
+
+def keep_alive():
+    """منع Render من إيقاف الخدمة"""
+    while True:
+        try:
+            render_url = os.environ.get('RENDER_EXTERNAL_URL', '')
+            if render_url:
+                response = requests.get(f"{render_url}/health", timeout=10)
+                print(f"✅ Keep-alive: {response.status_code}")
+            else:
+                print("🔄 Keep-alive: No URL")
+            time.sleep(180)  # كل 3 دقائق
+        except Exception as e:
+            print(f"⚠️ Keep-alive: {e}")
+            time.sleep(60)
+
 def run_bot():
+    """تشغيل البوت"""
     print("🔄 Starting bot...")
+    
     try:
         bot.remove_webhook()
-        time.sleep(2)
+        time.sleep(3)
     except:
         pass
     
-    print("🚀 Bot is running...")
-    bot.infinity_polling(timeout=60, long_polling_timeout=30)
+    if not init_database():
+        print("⚠️ Continuing without database")
+    
+    while True:
+        try:
+            print("🚀 Bot is running...")
+            bot.infinity_polling(timeout=60, long_polling_timeout=30)
+        except Exception as e:
+            print(f"❌ Bot error: {e}")
+            time.sleep(20)
 
 if __name__ == "__main__":
-    print("🎯 Bot - Ready!")
-    run_bot()
+    print("🎯 Multi-Language Bot - Ready!")
+    
+    # تشغيل Keep-alive أولاً
+    keep_thread = threading.Thread(target=keep_alive, daemon=True)
+    keep_thread.start()
+    
+    # تشغيل البوت
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+    
+    # تشغيل Flask
+    port = int(os.environ.get("PORT", 8080))
+    print(f"🌐 Starting Flask on port {port}")
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
