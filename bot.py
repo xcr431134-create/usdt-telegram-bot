@@ -1332,34 +1332,49 @@ def handle_stats(message):
     except Exception as e:
         bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
 
-# 🔧 نظام التشغيل المحسن
+# 🔧 نظام التشغيل المقاوم للتوقف
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "🤖 Bot is Running!"
+    return "🤖 Bot is Running - " + datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
 @app.route('/health')
 def health():
     return "✅ OK", 200
 
-def run_bot_forever():
-    """تشغيل البوت مع إعادة اتصال تلقائية"""
+@app.route('/restart')
+def restart():
+    # إعادة تشغيل تلقائية عند الطلب
+    return "🔄 Restarting...", 200
+
+def run_bot_with_restart():
+    """تشغيل البوت مع إعادة اتصال مستمرة"""
     while True:
         try:
-            print("🚀 Bot is running...")
-            bot.infinity_polling(timeout=60, long_polling_timeout=30)
+            print(f"🚀 Starting Bot at {datetime.now().strftime('%H:%M:%S')}")
+            bot.infinity_polling(timeout=60, long_polling_timeout=30, restart_on_change=True)
+            
         except Exception as e:
-            print(f"❌ Bot error: {e}")
-            print("🔄 Restarting bot in 5 seconds...")
-            time.sleep(5)
+            print(f"❌ Bot crashed: {e}")
+            print(f"🔄 Auto-restarting at {datetime.now().strftime('%H:%M:%S')}")
+            
+            # تنظيف قبل إعادة التشغيل
+            try:
+                bot.stop_polling()
+            except:
+                pass
+            
+            # إعادة تشغيل سريعة
+            time.sleep(3)
 
 if __name__ == "__main__":
-    print("🎯 Multi-Language Bot - Ready!")
+    print("🎯 Bot Starting with Auto-Restart...")
     
+    # تنظيف الويب هوك
     try:
         bot.remove_webhook()
-        time.sleep(2)
+        time.sleep(1)
     except:
         pass
     
@@ -1372,5 +1387,5 @@ if __name__ == "__main__":
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
     
-    # تشغيل البوت مع إعادة اتصال
-    run_bot_forever()
+    # تشغيل البوت مع الحماية
+    run_bot_with_restart()
