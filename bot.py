@@ -1333,7 +1333,7 @@ def handle_stats(message):
         bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
 
 # =============================================
-# 🔧 نظام الحماية والإستقرار - إضافات فقط
+# 🔧 نظام الحماية والإستقرار المحسن
 # =============================================
 
 import urllib3
@@ -1380,7 +1380,6 @@ def self_health_check():
             print(f"❌ Health check failed: {e}")
             print("🔄 Restarting bot due to health check failure...")
             time.sleep(10)
-            # إعادة التشغيل التلقائي
             import os
             import sys
             os.execv(sys.executable, ['python'] + sys.argv)
@@ -1407,13 +1406,11 @@ def run_bot_with_restart():
             except Exception as e:
                 print(f"ℹ️ Webhook cleanup: {e}")
             
-            # إعدادات بولينج محسنة
+            # ✅ الإصلاح: إزالة retry_on_420
             bot.infinity_polling(
                 timeout=90, 
                 long_polling_timeout=60,
-                interval=0.5,
-                retry_on_420=True,
-                allowed_updates=None
+                interval=0.5
             )
             
         except requests.exceptions.ReadTimeout:
