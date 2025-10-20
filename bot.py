@@ -1332,45 +1332,136 @@ def handle_stats(message):
     except Exception as e:
         bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
 
-def run_bot_with_restart():
-    """تشغيل البوت مع إعادة اتصال مستمرة"""
+# =============================================
+# 🔧 نظام الحماية والإستقرار - إضافات فقط
+# =============================================
+
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# زيادة مهلات التليجرام
+telebot.apihelper.READ_TIMEOUT = 90
+telebot.apihelper.CONNECT_TIMEOUT = 60
+
+def keep_alive():
+    """خادم ويب بسيط لإبقاء البوت نشطاً"""
+    from flask import Flask
+    app = Flask(__name__)
+    
+    @app.route('/')
+    def home():
+        return "🤖 Bot is running perfectly!"
+    
+    @app.route('/health')
+    def health():
+        return "✅ Bot Health: OK"
+    
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+
+def self_health_check():
+    """فحص صحة البوت بشكل دوري"""
+    import time
+    from datetime import datetime
+    check_count = 0
     while True:
         try:
-            print(f"🚀 Starting Bot at {datetime.now().strftime('%H:%M:%S')}")
-            # إزالة restart_on_change علشان ما تحتاج watchdog
-            bot.infinity_polling(timeout=60, long_polling_timeout=30)
+            # فحص اتصال MongoDB
+            client.admin.command('ping')
+            
+            # فحص اتصال Telegram
+            bot.get_me()
+            
+            check_count += 1
+            print(f"✅ Health check #{check_count} passed at {datetime.now().strftime('%H:%M:%S')}")
+            time.sleep(300)  # كل 5 دقائق
             
         except Exception as e:
-            print(f"❌ Bot crashed: {e}")
-            print(f"🔄 Auto-restarting at {datetime.now().strftime('%H:%M:%S')}")
+            print(f"❌ Health check failed: {e}")
+            print("🔄 Restarting bot due to health check failure...")
+            time.sleep(10)
+            # إعادة التشغيل التلقائي
+            import os
+            import sys
+            os.execv(sys.executable, ['python'] + sys.argv)
+
+def run_bot_with_restart():
+    """تشغيل البوت مع إعادة اتصال مستمرة محسنة"""
+    import time
+    from datetime import datetime
+    import requests
+    import sys
+    import os
+    
+    restart_count = 0
+    max_restarts = 100
+    
+    while restart_count < max_restarts:
+        try:
+            print(f"🚀 Starting Bot (Attempt {restart_count + 1}) at {datetime.now().strftime('%H:%M:%S')}")
             
-            # تنظيف قبل إعادة التشغيل
+            # تنظيف الويب هوك قبل البدء
+            try:
+                bot.remove_webhook()
+                time.sleep(3)
+            except Exception as e:
+                print(f"ℹ️ Webhook cleanup: {e}")
+            
+            # إعدادات بولينج محسنة
+            bot.infinity_polling(
+                timeout=90, 
+                long_polling_timeout=60,
+                interval=0.5,
+                retry_on_420=True,
+                allowed_updates=None
+            )
+            
+        except requests.exceptions.ReadTimeout:
+            print("⏰ Read timeout - Reconnecting...")
+            restart_count += 1
+            time.sleep(10)
+            
+        except requests.exceptions.ConnectionError:
+            print("🔌 Connection error - Reconnecting...")
+            restart_count += 1
+            time.sleep(15)
+            
+        except telebot.apihelper.ApiException as e:
+            print(f"📡 Telegram API error: {e} - Reconnecting...")
+            restart_count += 1
+            time.sleep(25)
+            
+        except Exception as e:
+            print(f"❌ Unexpected error: {e} - Restarting...")
+            restart_count += 1
+            time.sleep(30)
+            
+        finally:
             try:
                 bot.stop_polling()
             except:
                 pass
             
-            # إعادة تشغيل سريعة
-            time.sleep(5)
+    print("🛑 Maximum restart attempts reached. Bot stopped completely.")
 
 if __name__ == "__main__":
-    print("🎯 Bot Starting with Auto-Restart...")
+    print("🎯 Starting Ultimate Bot with All Protection Systems...")
     
-    # تنظيف الويب هوك
+    # تشغيل خادم الويب في الخلفية
     try:
-        bot.remove_webhook()
-        time.sleep(1)
-    except:
-        pass
+        web_thread = threading.Thread(target=keep_alive, daemon=True)
+        web_thread.start()
+        print("✅ Keep-alive web server started")
+    except Exception as e:
+        print(f"❌ Failed to start web server: {e}")
     
-    # تشغيل Flask في الخلفية
-    import threading
-    def run_flask():
-        port = int(os.environ.get("PORT", 8080))
-        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    # تشغيل نظام المراقبة الصحية
+    try:
+        health_thread = threading.Thread(target=self_health_check, daemon=True)
+        health_thread.start()
+        print("✅ Health monitoring system started")
+    except Exception as e:
+        print(f"❌ Failed to start health monitor: {e}")
     
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    
-    # تشغيل البوت مع الحماية
+    # تشغيل البوت الرئيسي
     run_bot_with_restart()
