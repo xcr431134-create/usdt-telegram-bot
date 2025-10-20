@@ -1384,81 +1384,69 @@ def self_health_check():
             import sys
             os.execv(sys.executable, ['python'] + sys.argv)
 
-def run_bot_with_restart():
-    """تشغيل البوت مع إعادة اتصال مستمرة محسنة"""
-    import time
-    from datetime import datetime
-    import requests
-    import sys
-    import os
-    
-    restart_count = 0
-    max_restarts = 100
-    
-    while restart_count < max_restarts:
-        try:
-            print(f"🚀 Starting Bot (Attempt {restart_count + 1}) at {datetime.now().strftime('%H:%M:%S')}")
-            
-            # تنظيف الويب هوك قبل البدء
-            try:
-                bot.remove_webhook()
-                time.sleep(3)
-            except Exception as e:
-                print(f"ℹ️ Webhook cleanup: {e}")
-            
-            # ✅ الإصلاح: إزالة retry_on_420
-            bot.infinity_polling(
-                timeout=90, 
-                long_polling_timeout=60,
-                interval=0.5
-            )
-            
-        except requests.exceptions.ReadTimeout:
-            print("⏰ Read timeout - Reconnecting...")
-            restart_count += 1
-            time.sleep(10)
-            
-        except requests.exceptions.ConnectionError:
-            print("🔌 Connection error - Reconnecting...")
-            restart_count += 1
-            time.sleep(15)
-            
-        except telebot.apihelper.ApiException as e:
-            print(f"📡 Telegram API error: {e} - Reconnecting...")
-            restart_count += 1
-            time.sleep(25)
-            
-        except Exception as e:
-            print(f"❌ Unexpected error: {e} - Restarting...")
-            restart_count += 1
-            time.sleep(30)
-            
-        finally:
-            try:
-                bot.stop_polling()
-            except:
-                pass
-            
-    print("🛑 Maximum restart attempts reached. Bot stopped completely.")
+from flask import Flask, request
 
-if __name__ == "__main__":
-    print("🎯 Starting Ultimate Bot with All Protection Systems...")
-    
-    # تشغيل خادم الويب في الخلفية
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "🤖 البوت شغال بشكل مستمر على Render!"
+
+@app.route('/webhook/' + BOT_TOKEN, methods=['POST'])
+def webhook():
+    if request.method == 'POST':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return 'OK', 200
+    return 'Hello!', 200
+
+@app.route('/set_webhook')
+def set_webhook():
     try:
-        web_thread = threading.Thread(target=keep_alive, daemon=True)
-        web_thread.start()
-        print("✅ Keep-alive web server started")
+        # إزالة الويب هوك القديم
+        bot.remove_webhook()
+        time.sleep(1)
+        
+        # الحصول على عنوان URL التلقائي من Render
+        render_url = os.environ.get('RENDER_EXTERNAL_URL', 'your-app-name.onrender.com')
+        webhook_url = f"https://{render_url}/webhook/{BOT_TOKEN}"
+        
+        # تعيين الويب هوك الجديد
+        result = bot.set_webhook(url=webhook_url)
+        return f"✅ <b>تم تعيين الويب هوك بنجاح!</b><br>📎 <b>الرابط:</b> {webhook_url}<br>🎯 <b>النتيجة:</b> {result}"
     except Exception as e:
-        print(f"❌ Failed to start web server: {e}")
-    
-    # تشغيل نظام المراقبة الصحية
+        return f"❌ <b>خطأ في تعيين الويب هوك:</b> {e}"
+
+@app.route('/delete_webhook')
+def delete_webhook():
     try:
-        health_thread = threading.Thread(target=self_health_check, daemon=True)
-        health_thread.start()
-        print("✅ Health monitoring system started")
+        result = bot.remove_webhook()
+        return f"✅ <b>تم حذف الويب هوك:</b> {result}"
     except Exception as e:
-        print(f"❌ Failed to start health monitor: {e}")
+        return f"❌ <b>خطأ في حذف الويب هوك:</b> {e}"
+
+# تشغيل الخادم
+if __name__ == '__main__':
+    print("🚀 بدء تشغيل البوت بنظام Webhooks المستقر...")
     
-    # تشغيل البوت الرئيسي
-    run_bot_with_restart()
+    # تعيين الويب هوك تلقائياً عند التشغيل
+    try:
+        bot.remove_webhook()
+        time.sleep(2)
+        
+        # استخدام عنوان Render التلقائي
+        render_url = os.environ.get('RENDER_EXTERNAL_URL', 'your-app-name.onrender.com')
+        webhook_url = f"https://{render_url}/webhook/{BOT_TOKEN}"
+        
+        bot.set_webhook(url=webhook_url)
+        print(f"✅ تم تعيين الويب هوك تلقائياً: {webhook_url}")
+        print("🎯 البوت جاهز لاستقبال الرسائل عبر Webhooks!")
+        
+    except Exception as e:
+        print(f"⚠️  لم يتم تعيين الويب هوك تلقائياً: {e}")
+        print("🔧 يمكنك تعيينه يدوياً عبر: /set_webhook")
+    
+    # تشغيل خادم Flask
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port, debug=False)
