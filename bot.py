@@ -5,7 +5,7 @@ import threading
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from datetime import datetime, timedelta
 import time
-from flask import Flask
+from flask import Flask, request
 import logging
 import requests
 from pymongo import MongoClient
@@ -1333,98 +1333,61 @@ def handle_stats(message):
         bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
 
 # =============================================
-# 🔧 نظام الحماية والإستقرار المحسن
+# 🔧 نظام ويب هوك مبسط بدون تضاربات
 # =============================================
 
-import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# زيادة مهلات التليجرام
-telebot.apihelper.READ_TIMEOUT = 90
-telebot.apihelper.CONNECT_TIMEOUT = 60
-
-def keep_alive():
-    """خادم ويب بسيط لإبقاء البوت نشطاً"""
-    from flask import Flask
-    app = Flask(__name__)
-    
-    @app.route('/')
-    def home():
-        return "🤖 Bot is running perfectly!"
-    
-    @app.route('/health')
-    def health():
-        return "✅ Bot Health: OK"
-    
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-
-def self_health_check():
-    """فحص صحة البوت بشكل دوري"""
-    import time
-    from datetime import datetime
-    check_count = 0
-    while True:
-        try:
-            # فحص اتصال MongoDB
-            client.admin.command('ping')
-            
-            # فحص اتصال Telegram
-            bot.get_me()
-            
-            check_count += 1
-            print(f"✅ Health check #{check_count} passed at {datetime.now().strftime('%H:%M:%S')}")
-            time.sleep(300)  # كل 5 دقائق
-            
-        except Exception as e:
-            print(f"❌ Health check failed: {e}")
-            print("🔄 Restarting bot due to health check failure...")
-            time.sleep(10)
-            import os
-            import sys
-            os.execv(sys.executable, ['python'] + sys.argv)
-
-from flask import Flask, request
-import threading
-import time
 from flask import Flask, request
 import time
-import os
 
 app = Flask(__name__)
 
-@app.route('/')
-def home():
-    return "✅ Bot LIVE - " + time.strftime("%Y-%m-%d %H:%M:%S")
-
 @app.route('/webhook', methods=['POST'])
 def webhook():
+    """استقبال الرسائل من تليجرام"""
     try:
-        update = telebot.types.Update.de_json(request.get_json())
+        json_data = request.get_json()
+        update = telebot.types.Update.de_json(json_data)
         bot.process_new_updates([update])
-        print("📩 Message processed")
+        return 'OK'
     except Exception as e:
-        print(f"❌ Webhook error: {e}")
-    return 'OK'
+        print(f"❌ خطأ في ويب هوك: {e}")
+        return 'OK'
 
-@app.route('/ping')
-def ping():
-    return "🏓 Pong - " + time.strftime("%H:%M:%S")
+@app.route('/')
+def home():
+    return "🤖 البوت شغال بشكل مستمر - " + time.strftime("%Y-%m-%d %H:%M:%S")
+
+@app.route('/health')
+def health():
+    return "✅ البوت بصحة جيدة"
+
+@app.route('/set_webhook')
+def set_webhook():
+    """تعيين الويب هوك يدوياً"""
+    try:
+        bot.remove_webhook()
+        time.sleep(2)
+        webhook_url = "https://usdt-telegram-bot-8t4a.onrender.com/webhook"
+        result = bot.set_webhook(url=webhook_url)
+        return f"✅ تم تعيين الويب هوك: {webhook_url}<br>النتيجة: {result}"
+    except Exception as e:
+        return f"❌ خطأ في تعيين الويب هوك: {e}"
 
 if __name__ == '__main__':
-    print("🚀 Starting Bot with Simple Setup...")
+    print("🚀 بدء تشغيل البوت بنظام ويب هوك مبسط...")
     
-    # تنظيف وتعيين الويب هوك
+    # تعيين الويب هوك تلقائياً
     try:
         bot.remove_webhook()
         time.sleep(3)
-        webhook_url = f"https://{os.environ.get('RENDER_EXTERNAL_URL', 'usdt-telegram-bot-8t4a.onrender.com')}/webhook"
+        webhook_url = "https://usdt-telegram-bot-8t4a.onrender.com/webhook"
         success = bot.set_webhook(url=webhook_url)
-        print(f"✅ Webhook: {webhook_url} - Success: {success}")
+        print(f"✅ تم تعيين الويب هوك: {webhook_url}")
+        print(f"🎯 نجاح التعيين: {success}")
     except Exception as e:
-        print(f"❌ Webhook setup failed: {e}")
+        print(f"❌ فشل تعيين الويب هوك: {e}")
     
     # تشغيل الخادم
     port = int(os.environ.get("PORT", 8080))
-    print(f"🔧 Starting on port {port}")
+    print(f"🔧 تشغيل الخادم على المنفذ: {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
