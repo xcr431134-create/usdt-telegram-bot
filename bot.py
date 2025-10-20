@@ -1332,7 +1332,7 @@ def handle_stats(message):
     except Exception as e:
         bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
 
-# 🔧 نظام التشغيل البسيط والموثوق
+# 🔧 نظام التشغيل المحسن
 app = Flask(__name__)
 
 @app.route('/')
@@ -1343,11 +1343,19 @@ def home():
 def health():
     return "✅ OK", 200
 
+def run_bot_forever():
+    """تشغيل البوت مع إعادة اتصال تلقائية"""
+    while True:
+        try:
+            print("🚀 Bot is running...")
+            bot.infinity_polling(timeout=60, long_polling_timeout=30)
+        except Exception as e:
+            print(f"❌ Bot error: {e}")
+            print("🔄 Restarting bot in 5 seconds...")
+            time.sleep(5)
+
 if __name__ == "__main__":
     print("🎯 Multi-Language Bot - Ready!")
-    
-    # تشغيل البوت مباشرة
-    print("🚀 Starting bot...")
     
     try:
         bot.remove_webhook()
@@ -1364,5 +1372,5 @@ if __name__ == "__main__":
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
     
-    # تشغيل البوت
-    bot.infinity_polling(timeout=60, long_polling_timeout=30)
+    # تشغيل البوت مع إعادة اتصال
+    run_bot_forever()
