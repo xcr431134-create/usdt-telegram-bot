@@ -1332,6 +1332,126 @@ def handle_stats(message):
     except Exception as e:
         bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
 
+# 📢 نظام الإرسال الجماعي المتكامل
+@bot.message_handler(commands=['broadcast'])
+def handle_broadcast(message):
+    """إرسال رسالة جماعية لجميع المستخدمين"""
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ <b>ليس لديك صلاحية!</b>")
+        return
+    
+    try:
+        # الحصول على نص الرسالة
+        command_parts = message.text.split(' ', 1)
+        if len(command_parts) < 2:
+            bot.reply_to(message, "📝 <b>استخدام:</b> <code>/broadcast [رسالتك هنا]</code>\n\n💡 <b>مثال:</b>\n<code>/broadcast مرحبا بالجميع! 🎉</code>")
+            return
+        
+        broadcast_text = command_parts[1]
+        
+        # تأكيد الإرسال
+        confirm_keyboard = InlineKeyboardMarkup()
+        confirm_keyboard.add(
+            InlineKeyboardButton("✅ نعم، أرسل للجميع", callback_data=f"broadcast_confirm:{broadcast_text}"),
+            InlineKeyboardButton("❌ إلغاء", callback_data="broadcast_cancel")
+        )
+        
+        # الحصول على عدد المستخدمين
+        total_users = users_collection.count_documents({})
+        
+        bot.reply_to(message, 
+                    f"📢 <b>تأكيد الإرسال الجماعي</b>\n\n"
+                    f"📝 <b>الرسالة:</b>\n{broadcast_text}\n\n"
+                    f"👥 <b>عدد المستخدمين:</b> {total_users}\n"
+                    f"⚠️ <b>هذا الإجراء لا يمكن التراجع عنه</b>",
+                    reply_markup=confirm_keyboard)
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('broadcast_confirm:'))
+def handle_broadcast_confirm(call):
+    """معالجة تأكيد الإرسال الجماعي"""
+    try:
+        broadcast_text = call.data.split(':', 1)[1]
+        bot.answer_callback_query(call.id, "🔄 بدء الإرسال الجماعي...")
+        
+        # الحصول على جميع المستخدمين
+        all_users = list(users_collection.find({}, {'user_id': 1}))
+        total_users = len(all_users)
+        successful_sends = 0
+        failed_sends = 0
+        
+        # تحديث الرسالة الأصلية
+        progress_msg = bot.edit_message_text(
+            f"📤 <b>جاري الإرسال الجماعي...</b>\n\n"
+            f"👥 <b>إجمالي المستخدمين:</b> {total_users}\n"
+            f"✅ <b>تم الإرسال:</b> 0\n"
+            f"❌ <b>فشل:</b> 0\n"
+            f"⏳ <b>متبقي:</b> {total_users}",
+            call.message.chat.id,
+            call.message.message_id
+        )
+        
+        # إرسال للجميع
+        for i, user in enumerate(all_users):
+            try:
+                user_id = user['user_id']
+                bot.send_message(user_id, broadcast_text)
+                successful_sends += 1
+                
+                # تحديث التقدم كل 10 رسائل
+                if (i + 1) % 10 == 0 or (i + 1) == total_users:
+                    try:
+                        bot.edit_message_text(
+                            f"📤 <b>جاري الإرسال الجماعي...</b>\n\n"
+                            f"👥 <b>إجمالي المستخدمين:</b> {total_users}\n"
+                            f"✅ <b>تم الإرسال:</b> {successful_sends}\n"
+                            f"❌ <b>فشل:</b> {failed_sends}\n"
+                            f"⏳ <b>متبقي:</b> {total_users - (i + 1)}",
+                            call.message.chat.id,
+                            call.message.message_id
+                        )
+                    except:
+                        pass  # تجاهل أخطاء التحديث
+                
+                time.sleep(0.2)  # تجنب rate limits
+                
+            except Exception as e:
+                failed_sends += 1
+                print(f"❌ فشل الإرسال للمستخدم {user['user_id']}: {e}")
+        
+        # النتيجة النهائية
+        success_rate = (successful_sends / total_users) * 100 if total_users > 0 else 0
+        
+        bot.edit_message_text(
+            f"🎉 <b>تم الانتهاء من الإرسال الجماعي!</b>\n\n"
+            f"📊 <b>الإحصائيات النهائية:</b>\n"
+            f"👥 <b>إجمالي المستخدمين:</b> {total_users}\n"
+            f"✅ <b>تم الإرسال بنجاح:</b> {successful_sends}\n"
+            f"❌ <b>فشل في الإرسال:</b> {failed_sends}\n"
+            f"📈 <b>نسبة النجاح:</b> {success_rate:.1f}%",
+            call.message.chat.id,
+            call.message.message_id
+        )
+        
+    except Exception as e:
+        bot.answer_callback_query(call.id, f"❌ خطأ: {e}")
+        try:
+            bot.edit_message_text(f"❌ <b>فشل في الإرسال الجماعي:</b> {e}", 
+                                call.message.chat.id, 
+                                call.message.message_id)
+        except:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data == "broadcast_cancel")
+def handle_broadcast_cancel(call):
+    """إلغاء الإرسال الجماعي"""
+    bot.answer_callback_query(call.id, "❌ تم إلغاء الإرسال الجماعي")
+    bot.edit_message_text("❌ <b>تم إلغاء الإرسال الجماعي</b>", 
+                         call.message.chat.id, 
+                         call.message.message_id)
+
 # =============================================
 # 🔧 نظام ويب هوك مبسط بدون تضاربات
 # =============================================
