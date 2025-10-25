@@ -2,7 +2,8 @@ import os
 import telebot
 import random
 import threading
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import json
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from datetime import datetime, timedelta
 import time
 from flask import Flask, request
@@ -275,6 +276,10 @@ def show_main_menu(chat_id, message_id=None, user_id=None):
         """
         
         keyboard = InlineKeyboardMarkup(row_width=2)
+        
+        # 🔥 إضافة زر التطبيق المصغر هنا - السطر الجديد
+        keyboard.add(InlineKeyboardButton("🎮 لعبة Uncrossable Rush", web_app=WebAppInfo(url=f"https://your-mini-app-domain.com?user_id={user_id}")))
+        
         keyboard.add(
             InlineKeyboardButton(t(user_id, 'games_btn'), callback_data="games"),
             InlineKeyboardButton(t(user_id, 'vip_btn'), callback_data="vip_services")
@@ -1451,6 +1456,389 @@ def handle_broadcast_cancel(call):
     bot.edit_message_text("❌ <b>تم إلغاء الإرسال الجماعي</b>", 
                          call.message.chat.id, 
                          call.message.message_id)
+
+# =============================================
+# 🎮 نظام التطبيق المصغر - إضافات جديدة فقط
+# =============================================
+
+# 🔗 رابط التطبيق المصغر (إضافة جديدة)
+MINI_APP_URL = "https://your-mini-app-domain.com"  # سيتم تغييره لرابط التطبيق المصغر الفعلي
+
+# 🎯 نظام استقبال بيانات التطبيق المصغر (إضافة جديدة)
+@bot.message_handler(content_types=['web_app_data'])
+def handle_web_app_data(message):
+    """استقبال بيانات من التطبيق المصغر"""
+    try:
+        user_id = message.from_user.id
+        data = json.loads(message.web_app_data.data)
+        
+        game_type = data.get('type')
+        
+        if game_type == 'uncrossable_rush_result':
+            # معالجة نتائج لعبة Uncrossable Rush
+            bet_amount = data.get('bet_amount', 0)
+            game_result = data.get('result')
+            win_amount = data.get('win_amount', 0)
+            
+            user = get_user(user_id)
+            lang = get_user_language(user_id)
+            
+            if game_result == "win":
+                new_balance = user['balance'] + win_amount
+                update_user(user_id, 
+                          balance=new_balance,
+                          total_earnings=user['total_earnings'] + win_amount)
+                
+                result_text = f"""
+🎉 <b>مبروك! فزت في Uncrossable Rush!</b>
+
+💰 <b>الرهان:</b> {bet_amount:.2f} USDT
+🏆 <b>الفوز:</b> {win_amount:.2f} USDT
+💵 <b>الرصيد الجديد:</b> {new_balance:.2f} USDT
+
+🔥 <b>استمر في اللعب!</b>
+                """ if lang == 'ar' else f"""
+🎉 <b>Congratulations! You won in Uncrossable Rush!</b>
+
+💰 <b>Bet:</b> {bet_amount:.2f} USDT
+🏆 <b>Win:</b> {win_amount:.2f} USDT
+💵 <b>New Balance:</b> {new_balance:.2f} USDT
+
+🔥 <b>Keep playing!</b>
+                """
+            else:
+                new_balance = user['balance'] - bet_amount
+                update_user(user_id, balance=new_balance)
+                
+                result_text = f"""
+💥 <b>انتهت اللعبة!</b>
+
+💰 <b>الرهان:</b> {bet_amount:.2f} USDT
+😞 <b>الخسارة:</b> {bet_amount:.2f} USDT  
+💵 <b>الرصيد الجديد:</b> {new_balance:.2f} USDT
+
+🎯 <b>حاول مرة أخرى!</b>
+                """ if lang == 'ar' else f"""
+💥 <b>Game Over!</b>
+
+💰 <b>Bet:</b> {bet_amount:.2f} USDT
+😞 <b>Loss:</b> {bet_amount:.2f} USDT
+💵 <b>New Balance:</b> {new_balance:.2f} USDT
+
+🎯 <b>Try again!</b>
+                """
+            
+            bot.send_message(user_id, result_text)
+            
+    except Exception as e:
+        print(f"❌ Web app data error: {e}")
+
+# 🎮 أوامر إدارية للتطبيق المصغر (إضافات جديدة)
+@bot.message_handler(commands=['setminiapp'])
+def handle_set_miniapp(message):
+    """تعيين رابط التطبيق المصغر"""
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ <b>ليس لديك صلاحية!</b>")
+        return
+    
+    try:
+        parts = message.text.split(' ', 1)
+        if len(parts) < 2:
+            bot.reply_to(message, "📝 <b>استخدام:</b> <code>/setminiapp [رابط التطبيق المصغر]</code>")
+            return
+        
+        global MINI_APP_URL
+        MINI_APP_URL = parts[1]
+        bot.reply_to(message, f"✅ <b>تم تعيين رابط التطبيق المصغر:</b>\n{MINI_APP_URL}")
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
+
+@bot.message_handler(commands=['miniappinfo'])
+def handle_miniapp_info(message):
+    """عرض معلومات التطبيق المصغر"""
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ <b>ليس لديك صلاحية!</b>")
+        return
+    
+    info_text = f"""
+📱 <b>معلومات التطبيق المصغر</b>
+
+🔗 <b>الرابط الحالي:</b>
+{MINI_APP_URL}
+
+📊 <b>الحالة:</b> {'✅ نشط' if MINI_APP_URL != "https://your-mini-app-domain.com" else '❌ غير معين'}
+
+💡 <b>لتعيين رابط جديد:</b>
+<code>/setminiapp [الرابط الجديد]</code>
+    """
+    
+    bot.reply_to(message, info_text)
+
+@bot.message_handler(commands=['addgamebalance'])
+def handle_add_game_balance(message):
+    """إضافة رصيد للتطبيق المصغر"""
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ <b>ليس لديك صلاحية!</b>")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.reply_to(message, "📝 <b>استخدام:</b> <code>/addgamebalance [user_id] [amount]</code>")
+            return
+        
+        target_user_id, amount = parts[1], float(parts[2])
+        user = get_user(target_user_id)
+        
+        if not user:
+            bot.reply_to(message, "❌ <b>المستخدم غير موجود!</b>")
+            return
+        
+        new_balance = user['balance'] + amount
+        if update_user(target_user_id, 
+                      balance=new_balance,
+                      total_earnings=user['total_earnings'] + amount):
+            
+            # إرسال إشعار للمستخدم
+            lang = get_user_language(target_user_id)
+            notification = f"""
+🎉 <b>تم إضافة رصيد جديد!</b>
+
+💰 <b>المبلغ:</b> {amount:.2f} USDT
+💵 <b>الرصيد الجديد:</b> {new_balance:.2f} USDT
+
+🔥 <b>استمتع باللعب في التطبيق المصغر!</b>
+            """ if lang == 'ar' else f"""
+🎉 <b>New balance added!</b>
+
+💰 <b>Amount:</b> {amount:.2f} USDT
+💵 <b>New Balance:</b> {new_balance:.2f} USDT
+
+🔥 <b>Enjoy playing in the mini app!</b>
+            """
+            
+            try:
+                bot.send_message(target_user_id, notification)
+            except:
+                pass  # إذا كان المستخدم حظر البوت
+            
+            bot.reply_to(message, 
+                        f"✅ <b>تم إضافة {amount:.2f} USDT للمستخدم {target_user_id}</b>\n"
+                        f"💰 <b>الرصيد الجديد:</b> {new_balance:.2f} USDT")
+        else:
+            bot.reply_to(message, "❌ <b>فشل في إضافة الرصيد!</b>")
+            
+    except Exception as e:
+        bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
+
+@bot.message_handler(commands=['massgamebalance'])
+def handle_mass_game_balance(message):
+    """إضافة رصيد جماعي للتطبيق المصغر"""
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ <b>ليس لديك صلاحية!</b>")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 2:
+            bot.reply_to(message, "📝 <b>استخدام:</b> <code>/massgamebalance [amount]</code>")
+            return
+        
+        amount = float(parts[1])
+        
+        # الحصول على جميع المستخدمين
+        all_users = list(users_collection.find({}, {'user_id': 1, 'balance': 1}))
+        total_users = len(all_users)
+        
+        if total_users == 0:
+            bot.reply_to(message, "❌ <b>لا يوجد مستخدمين!</b>")
+            return
+        
+        # تأكيد الإجراء
+        confirm_keyboard = InlineKeyboardMarkup()
+        confirm_keyboard.add(
+            InlineKeyboardButton("✅ نعم، أضف للجميع", callback_data=f"mass_balance_confirm:{amount}"),
+            InlineKeyboardButton("❌ إلغاء", callback_data="mass_balance_cancel")
+        )
+        
+        bot.reply_to(message,
+                    f"💰 <b>تأكيد الإضافة الجماعية</b>\n\n"
+                    f"👥 <b>عدد المستخدمين:</b> {total_users}\n"
+                    f"💵 <b>المبلغ لكل مستخدم:</b> {amount:.2f} USDT\n"
+                    f"📈 <b>إجمالي المبلغ:</b> {amount * total_users:.2f} USDT\n\n"
+                    f"⚠️ <b>هذا الإجراء لا يمكن التراجع عنه</b>",
+                    reply_markup=confirm_keyboard)
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('mass_balance_confirm:'))
+def handle_mass_balance_confirm(call):
+    """معالجة تأكيد الإضافة الجماعية"""
+    try:
+        amount = float(call.data.split(':')[1])
+        bot.answer_callback_query(call.id, "🔄 بدء الإضافة الجماعية...")
+        
+        # الحصول على جميع المستخدمين
+        all_users = list(users_collection.find({}, {'user_id': 1, 'balance': 1}))
+        total_users = len(all_users)
+        successful_updates = 0
+        failed_updates = 0
+        
+        # تحديث الرسالة الأصلية
+        progress_msg = bot.edit_message_text(
+            f"💰 <b>جاري الإضافة الجماعية...</b>\n\n"
+            f"👥 <b>إجمالي المستخدمين:</b> {total_users}\n"
+            f"✅ <b>تم التحديث:</b> 0\n"
+            f"❌ <b>فشل:</b> 0\n"
+            f"⏳ <b>متبقي:</b> {total_users}",
+            call.message.chat.id,
+            call.message.message_id
+        )
+        
+        # تحديث جميع المستخدمين
+        for i, user in enumerate(all_users):
+            try:
+                user_id = user['user_id']
+                new_balance = user['balance'] + amount
+                
+                if update_user(user_id, 
+                             balance=new_balance,
+                             total_earnings=user.get('total_earnings', 0) + amount):
+                    successful_updates += 1
+                    
+                    # إرسال إشعار للمستخدم (اختياري)
+                    try:
+                        lang = get_user_language(user_id)
+                        notification = f"🎉 تم إضافة {amount:.2f} USDT لرصيدك! الرصيد الجديد: {new_balance:.2f} USDT" if lang == 'ar' else f"🎉 Added {amount:.2f} USDT to your balance! New balance: {new_balance:.2f} USDT"
+                        bot.send_message(user_id, notification)
+                    except:
+                        pass  # إذا كان المستخدم حظر البوت
+                
+                else:
+                    failed_updates += 1
+                
+                # تحديث التقدم كل 10 مستخدمين
+                if (i + 1) % 10 == 0 or (i + 1) == total_users:
+                    try:
+                        bot.edit_message_text(
+                            f"💰 <b>جاري الإضافة الجماعية...</b>\n\n"
+                            f"👥 <b>إجمالي المستخدمين:</b> {total_users}\n"
+                            f"✅ <b>تم التحديث:</b> {successful_updates}\n"
+                            f"❌ <b>فشل:</b> {failed_updates}\n"
+                            f"⏳ <b>متبقي:</b> {total_users - (i + 1)}",
+                            call.message.chat.id,
+                            call.message.message_id
+                        )
+                    except:
+                        pass
+                
+                time.sleep(0.1)  # تجنب الضغط على قاعدة البيانات
+                
+            except Exception as e:
+                failed_updates += 1
+                print(f"❌ فشل تحديث المستخدم {user['user_id']}: {e}")
+        
+        # النتيجة النهائية
+        success_rate = (successful_updates / total_users) * 100 if total_users > 0 else 0
+        
+        bot.edit_message_text(
+            f"🎉 <b>تم الانتهاء من الإضافة الجماعية!</b>\n\n"
+            f"📊 <b>الإحصائيات النهائية:</b>\n"
+            f"👥 <b>إجمالي المستخدمين:</b> {total_users}\n"
+            f"✅ <b>تم التحديث بنجاح:</b> {successful_updates}\n"
+            f"❌ <b>فشل في التحديث:</b> {failed_updates}\n"
+            f"💰 <b>المبلغ المضاف:</b> {amount:.2f} USDT لكل مستخدم\n"
+            f"📈 <b>نسبة النجاح:</b> {success_rate:.1f}%",
+            call.message.chat.id,
+            call.message.message_id
+        )
+        
+    except Exception as e:
+        bot.answer_callback_query(call.id, f"❌ خطأ: {e}")
+        try:
+            bot.edit_message_text(f"❌ <b>فشل في الإضافة الجماعية:</b> {e}", 
+                                call.message.chat.id, 
+                                call.message.message_id)
+        except:
+            pass
+
+@bot.callback_query_handler(func=lambda call: call.data == "mass_balance_cancel")
+def handle_mass_balance_cancel(call):
+    """إلغاء الإضافة الجماعية"""
+    bot.answer_callback_query(call.id, "❌ تم إلغاء الإضافة الجماعية")
+    bot.edit_message_text("❌ <b>تم إلغاء الإضافة الجماعية</b>", 
+                         call.message.chat.id, 
+                         call.message.message_id)
+
+@bot.message_handler(commands=['gamereward'])
+def handle_game_reward(message):
+    """مكافأة مستخدمين التطبيق المصغر"""
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ <b>ليس لديك صلاحية!</b>")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) < 3:
+            bot.reply_to(message, 
+                        "📝 <b>استخدام:</b> <code>/gamereward [user_id] [amount] [reason?]</code>\n\n"
+                        "💡 <b>أمثلة:</b>\n"
+                        "<code>/gamereward 123456789 10.0 فوز في المسابقة</code>\n"
+                        "<code>/gamereward 123456789 5.0 نشاط مميز</code>")
+            return
+        
+        target_user_id = parts[1]
+        amount = float(parts[2])
+        reason = " ".join(parts[3:]) if len(parts) > 3 else "مكافأة التطبيق المصغر"
+        
+        user = get_user(target_user_id)
+        if not user:
+            bot.reply_to(message, "❌ <b>المستخدم غير موجود!</b>")
+            return
+        
+        new_balance = user['balance'] + amount
+        if update_user(target_user_id, 
+                      balance=new_balance,
+                      total_earnings=user['total_earnings'] + amount):
+            
+            # إرسال إشعار مفصل للمستخدم
+            lang = get_user_language(target_user_id)
+            notification = f"""
+🎊 <b>مبروك! حصلت على مكافأة</b>
+
+💰 <b>المبلغ:</b> {amount:.2f} USDT
+📝 <b>السبب:</b> {reason}
+💵 <b>الرصيد الجديد:</b> {new_balance:.2f} USDT
+
+🎮 <b>استخدمها في التطبيق المصغر!</b>
+            """ if lang == 'ar' else f"""
+🎊 <b>Congratulations! You received a reward</b>
+
+💰 <b>Amount:</b> {amount:.2f} USDT
+📝 <b>Reason:</b> {reason}
+💵 <b>New Balance:</b> {new_balance:.2f} USDT
+
+🎮 <b>Use it in the mini app!</b>
+            """
+            
+            try:
+                bot.send_message(target_user_id, notification)
+            except:
+                pass
+            
+            bot.reply_to(message,
+                        f"✅ <b>تم منح المكافأة بنجاح!</b>\n\n"
+                        f"👤 <b>المستخدم:</b> {target_user_id}\n"
+                        f"💰 <b>المبلغ:</b> {amount:.2f} USDT\n"
+                        f"📝 <b>السبب:</b> {reason}\n"
+                        f"💵 <b>الرصيد الجديد:</b> {new_balance:.2f} USDT")
+        else:
+            bot.reply_to(message, "❌ <b>فشل في منح المكافأة!</b>")
+            
+    except Exception as e:
+        bot.reply_to(message, f"❌ <b>خطأ:</b> {e}")
 
 # =============================================
 # 🔧 نظام ويب هوك مبسط بدون تضاربات
